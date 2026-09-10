@@ -23,7 +23,7 @@ class ModulationPrediction(BaseModel):
 class DspMetrics(BaseModel):
     snr_db: float
     carrier_frequency_offset_hz: float
-    bandwidth_3db_hz: float
+    occupied_bandwidth_hz: float
     symbol_rate: float
     peak_frequency_hz: float
 
