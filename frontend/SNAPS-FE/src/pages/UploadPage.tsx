@@ -69,28 +69,26 @@ export function UploadPage() {
             {/* Backend connection pill */}
             <div className="shrink-0 pt-2">
               <span
-                className={`inline-flex items-center gap-2 border px-3 py-1.5 font-mono text-[0.7rem] tracking-[0.1em] ${
-                  backendOnline === true
+                className={`inline-flex items-center gap-2 border px-3 py-1.5 font-mono text-[0.7rem] tracking-[0.1em] ${backendOnline === true
                     ? "border-green-500/40 text-green-400 bg-green-500/5"
                     : backendOnline === false
-                    ? "border-amber-500/40 text-amber-400 bg-amber-500/5"
-                    : "border-border text-muted-foreground"
-                }`}
+                      ? "border-amber-500/40 text-amber-400 bg-amber-500/5"
+                      : "border-border text-muted-foreground"
+                  }`}
               >
                 <span
-                  className={`h-1.5 w-1.5 rounded-full ${
-                    backendOnline === true
+                  className={`h-1.5 w-1.5 rounded-full ${backendOnline === true
                       ? "bg-green-400 animate-pulse"
                       : backendOnline === false
-                      ? "bg-amber-400"
-                      : "bg-muted-foreground"
-                  }`}
+                        ? "bg-amber-400"
+                        : "bg-muted-foreground"
+                    }`}
                 />
                 {backendOnline === true
                   ? "AI DSP BACKEND ONLINE"
                   : backendOnline === false
-                  ? "STANDALONE / OFFLINE"
-                  : "CONNECTING..."}
+                    ? "STANDALONE / OFFLINE"
+                    : "CONNECTING..."}
               </span>
             </div>
           </div>
@@ -105,11 +103,10 @@ export function UploadPage() {
                 setActiveTab("upload");
                 setSelectedSample(null);
               }}
-              className={`font-mono text-xs tracking-wider uppercase transition-colors ${
-                activeTab === "upload"
+              className={`font-mono text-xs tracking-wider uppercase transition-colors ${activeTab === "upload"
                   ? "text-foreground font-semibold border-b-2 border-signal pb-1"
                   : "text-muted-foreground hover:text-foreground"
-              }`}
+                }`}
             >
               Custom File Upload
             </button>
@@ -119,11 +116,10 @@ export function UploadPage() {
                 setActiveTab("samples");
                 setFile(null);
               }}
-              className={`font-mono text-xs tracking-wider uppercase transition-colors ${
-                activeTab === "samples"
+              className={`font-mono text-xs tracking-wider uppercase transition-colors ${activeTab === "samples"
                   ? "text-foreground font-semibold border-b-2 border-signal pb-1"
                   : "text-muted-foreground hover:text-foreground"
-              }`}
+                }`}
             >
               Preloaded Dataset Samples ({samples.length})
             </button>
@@ -160,11 +156,10 @@ export function UploadPage() {
                       onKeyDown={(e) => {
                         if (e.key === "Enter" || e.key === " ") handleSelectSample(s);
                       }}
-                      className={`p-4 border transition-all cursor-pointer ${
-                        isSelected
+                      className={`p-4 border transition-all cursor-pointer ${isSelected
                           ? "border-signal bg-signal/10"
                           : "border-border hover:border-border-strong bg-background"
-                      }`}
+                        }`}
                     >
                       <div className="flex items-center justify-between">
                         <span className="font-mono text-xs font-semibold text-foreground">
@@ -209,10 +204,10 @@ export function UploadPage() {
               style={
                 isReady
                   ? {
-                      backgroundColor: "var(--foreground)",
-                      color: "var(--background)",
-                      borderColor: "var(--foreground)",
-                    }
+                    backgroundColor: "var(--foreground)",
+                    color: "var(--background)",
+                    borderColor: "var(--foreground)",
+                  }
                   : {}
               }
             >

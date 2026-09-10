@@ -39,12 +39,12 @@ export function ResultsPage() {
   const isLive = !!liveData;
 
   const metrics = [
-    { label: "Sample rate",    value: formatHz(data.sampleRate),      unit: "" },
-    { label: "Duration",       value: formatDuration(data.duration),   unit: "" },
-    { label: "Bandwidth (3dB)",value: formatHz(data.bandwidth),        unit: "" },
-    { label: "SNR",            value: `${typeof data.snr === "number" ? data.snr.toFixed(1) : data.snr} dB`, unit: "" },
-    { label: "Peak frequency", value: formatHz(data.peakFrequency),    unit: "" },
-    { label: "Samples",        value: formatCount(data.numSamples),     unit: "" },
+    { label: "Sample rate", value: formatHz(data.sampleRate), unit: "" },
+    { label: "Duration", value: formatDuration(data.duration), unit: "" },
+    { label: "Occupied Bandwidth (99% Power)", value: formatHz(data.bandwidth), unit: "" },
+    { label: "SNR", value: `${typeof data.snr === "number" ? data.snr.toFixed(1) : data.snr} dB`, unit: "" },
+    { label: "Peak frequency", value: formatHz(data.peakFrequency), unit: "" },
+    { label: "Samples", value: formatCount(data.numSamples), unit: "" },
   ];
 
   return (
@@ -66,11 +66,10 @@ export function ResultsPage() {
               {/* Status badge */}
               <div className="shrink-0">
                 <span
-                  className={`inline-block border px-4 py-2 font-mono text-[0.65rem] tracking-[0.14em] ${
-                    isLive
+                  className={`inline-block border px-4 py-2 font-mono text-[0.65rem] tracking-[0.14em] ${isLive
                       ? "border-green-500/40 text-green-400 bg-green-500/10"
                       : "border-dashed border-border-strong text-muted-foreground"
-                  }`}
+                    }`}
                 >
                   {isLive ? "LIVE ENGINE ANALYSIS · CONFIRMED" : "DEMO ANALYSIS · ILLUSTRATIVE DATA"}
                 </span>

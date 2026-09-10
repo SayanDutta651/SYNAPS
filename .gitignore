@@ -126,6 +126,8 @@ figures/
 # Frontend
 frontend/node_modules/
 frontend/dist/
-
+frontend/SNAPS-FE/node_modules/
+frontend/SNAPS-FE/dist/
+data/uploads/
 
 .cache/

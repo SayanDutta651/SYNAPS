@@ -1,0 +1,609 @@
+SYNAPS / SIH26147 PROJECT HANDOFF
+Read-only inspection date: 2026-09-10
+
+This document describes the project as it exists in the current workspace. It is an inspection and handoff document, not a design specification. Planned, incomplete, commented-out, and test-only behavior is explicitly identified.
+
+1. PROJECT OVERVIEW
+
+SIH26147 (SYNAPS) is a signal-intelligence project for accepting WAV or raw IQ signals, extracting signal/DSP evidence, classifying modulation, recovering symbols/bits, validating the recovered payload heuristically, and presenting an analysis report through a FastAPI backend and React/Vite frontend.
+
+The current objective is modulation recognition and signal analysis for four dataset classes: BPSK, QPSK, FSK/2FSK, and QAM16/16QAM. The code also contains a broader intended architecture for signal detection, feature fusion, hypotheses, fingerprinting, synchronization, demodulation, decoding, validation, and analyst presentation.
+
+The real production entry point is backend/services/pipeline.py. The public backend entry points are backend/main.py and backend/api/*.py. The frontend calls the backend through frontend/SNAPS-FE/src/services/api.ts.
+
+Current production flow, in simplified form:
+
+WAV/IQ upload or sample selection
+  -> format detection and loading
+  -> numeric/sample-rate validation
+  -> active-signal detection/segmentation
+  -> DC removal and amplitude normalization
+  -> DSP measurements (FFT, PSD, bandwidth, SNR, frequency/CFO, phase, symbol rate, constellation, HOC)
+  -> blind frequency and phase correction
+  -> timing estimate and symbol sampling
+  -> Transformer modulation prediction
+  -> DSP/AI feature fusion and evidence/decision
+  -> modulation-specific demodulation
+  -> recovered bits
+  -> ASCII conversion and heuristic payload validation
+  -> fingerprint/report generation
+  -> backend response and frontend visualizations
+
+This is not currently a ground-truth BER system. The production pipeline does not load metadata bits, does not align recovered bits with transmitted bits, and does not return BER or bit accuracy.
+
+2. CURRENT PROJECT STRUCTURE
+
+Top-level files:
+- README.md: very short project description; it is not a complete implementation guide.
+- flowchart.txt: architecture/pipeline diagram and intended stage ordering. It includes stages that are not all wired into production.
+- config.py: central configuration values, class names, and paths/settings used by code.
+- project_paths.py: path resolver and filename/modulation normalization logic for dataset files.
+- pyproject.toml: minimal project/tool configuration; it does not declare the full runtime dependency set.
+- requirements.txt: currently a very small dependency list (numpy, scipy, pytest, and a misspelled panda entry); the running project also needs packages such as torch, FastAPI, Pydantic, and Uvicorn.
+- LICENSE: project license text.
+- learning.txt: this handoff document.
+
+Major folders:
+- ai/: machine-learning models, representations, preprocessing, training, inference, and classification helpers.
+- backend/: FastAPI application, routes, schemas, and the live AnalysisPipeline service.
+- data/: IQ, WAV, JSON metadata, metadata backup, CSV snapshots, uploads, and data notes.
+- dsp/: signal-analysis algorithms used directly or indirectly by the pipeline.
+- experiments/: notebooks for CNN, fusion, spectrogram, self-supervised MAE, and Transformer work.
+- fusion/: DSP/AI evidence and feature fusion.
+- intelligence/: confidence, decisions, hypotheses, anomaly/unknown detection, fingerprinting, reporting, and recovery validation.
+- models/: additional model/result directories; the live Transformer checkpoint is under ai/models.
+- result/: saved Transformer results/checkpoint outputs when produced.
+- scripts/: dataset generation/preparation, analysis, DSP analysis, training, and metadata repair utilities.
+- signal_processing/: input, preprocessing, detection, synchronization, demodulation, symbol processing, and decoding.
+- tests/: unit/integration tests for AI, DSP, signal processing, and the pipeline.
+- frontend/SNAPS-FE/: React 19/Vite user interface. The current worktree also contains pre-existing frontend deletions/changes outside the scope of this document.
+
+3. FILE-BY-FILE / MODULE-BY-MODULE SUMMARY
+
+The following is a module-level summary of important Python files. Most modules expose plain functions; the production pipeline is the main orchestration class.
+
+Configuration, paths, and backend:
+- config.py: project constants, supported modulation/class names, data/model/result path settings. Inputs are configuration/environment values; output is imported constants.
+- project_paths.py: resolves IQ, WAV, metadata, and class paths and normalizes naming variants such as FSK/2FSK and QAM16/16QAM. Input is a signal ID, class, or path; output is filesystem Paths or matching metadata/file locations. This is the key correspondence helper.
+- backend/main.py: creates/configures the FastAPI application and registers routes.
+- backend/api/analysis.py: upload/sample analysis endpoints; forwards requests to the pipeline and serializes analysis output.
+- backend/api/signal.py: signal/sample-related endpoints and file handling.
+- backend/api/report.py: report-related endpoint(s).
+- backend/schemas/response.py: response models for classification, DSP, recovery, visualization, and report data. It includes recovery counts but no transmitted-bit sequence, BER, or bit-accuracy contract.
+- backend/services/pipeline.py: live orchestration. Loads and validates input, preprocesses, computes DSP, synchronizes, runs Transformer inference, fuses evidence, decides modulation, demodulates, decodes/validates, fingerprints, and assembles the response.
+
+AI preprocessing, representations, and classification:
+- ai/preprocessing/iq_loader.py: reads interleaved little-endian float32 I,Q data into complex samples; metadata/sample rate may be used, with a default rate when unavailable.
+- ai/preprocessing/wav_loader.py: loads the two-channel float32 WAV convention (channel 1 I, channel 2 Q) into complex samples.
+- ai/preprocessing/normalize.py: AI-side normalization utilities.
+- ai/preprocessing/inspect_iq.py: IQ inspection/diagnostic helpers.
+- ai/representations/raw_iq.py: raw IQ representation helpers.
+- ai/representations/spectrogram.py: spectrogram representation for learning/inspection.
+- ai/representations/constellation.py: constellation representation helpers.
+- ai/features/learned_features.py: learned-feature utilities; not the primary live classifier path.
+- ai/classification/modulation.py: modulation class/prediction handling.
+- ai/classification/confidence.py: confidence calculations/normalization.
+- ai/classification/unknown_detection.py: marks low-confidence predictions as unknown; its threshold is about 70 percent.
+
+AI models and inference:
+- ai/models/transformer.py: defines SignalTransformer. The live model consumes a fixed sequence of 1,000 samples with four values per sample: I, Q, magnitude, and phase, and returns four modulation logits/classes.
+- ai/models/cnn.py: CNN model implementation, present but not used by the live service.
+- ai/models/ssl_mae.py: masked-autoencoder/self-supervised model implementation, present but not used by the live service.
+- ai/inference/predict.py: loads the Transformer checkpoint, prepares normalized/padded/truncated features, performs inference, and returns class probabilities/prediction data.
+- ai/models/transformer.pth: checked-in Transformer checkpoint used/expected by live inference.
+
+AI training/evaluation:
+- ai/training/dataset.py: dataset discovery and sample/feature construction helpers. It resolves metadata/sample files and prepares model inputs.
+- ai/training/train.py: training pipeline, stratified split, DataLoaders, CrossEntropyLoss, Adam optimization, validation, checkpoint saving, and test metrics. Labels come from supported class/directory naming rather than validating metadata transmitted bits.
+- ai/training/evaluate.py: evaluation helpers.
+- ai/training/metrics.py: accuracy/per-class metric helpers.
+
+DSP modules:
+- dsp/spectral/fft.py: FFT and frequency-axis/spectrum computation.
+- dsp/spectral/psd.py: power spectral density estimation.
+- dsp/spectral/bandwidth.py: occupied-bandwidth/bandwidth measurements.
+- dsp/signal_quality/snr.py: signal-to-noise ratio estimates.
+- dsp/frequency/frequency_estimation.py: frequency and dominant-frequency estimates.
+- dsp/frequency/cfo.py: carrier-frequency-offset estimation/correction support.
+- dsp/phase/phase_estimation.py: phase estimation.
+- dsp/timing/symbol_rate.py: symbol-rate candidate/estimate logic.
+- dsp/constellation/constellation.py: constellation feature extraction/statistics; it also contains a large commented legacy implementation.
+- dsp/constellation/clustering.py: constellation clustering utilities.
+- dsp/statistical/hoc.py: higher-order cumulant/statistical features.
+- dsp/cyclostationary/analysis.py: cyclostationary analysis utilities.
+
+Signal input, preprocessing, and detection:
+- signal_processing/input/format_detection.py: identifies supported input formats.
+- signal_processing/input/loader.py: production loader for interleaved float32 IQ and supported WAV input.
+- signal_processing/input/metadata.py: SignalMetadata model/parser using a schema with names such as signal_id, file_name, file_format, sample_rate, number_of_samples, and modulation_type. This schema does not directly match the checked-in JSON keys filename, modulation, sampling_frequency_hz, and samples without translation.
+- signal_processing/input/validation.py: validates signal values, dimensions, sample rate, and input assumptions; it does not validate transmitted bits against recovered bits.
+- signal_processing/preprocessing/dc_removal.py: removes DC offset; used by the live pipeline.
+- signal_processing/preprocessing/normalization.py: amplitude normalization; used by the live pipeline.
+- signal_processing/preprocessing/filtering.py: filtering helpers; implemented but not part of the normal live master path.
+- signal_processing/preprocessing/resampling.py: resampling helpers; implemented but not part of the normal live master path.
+- signal_processing/detection/energy_detection.py: energy-based activity detection.
+- signal_processing/detection/segmentation.py: active-region segmentation.
+- signal_processing/detection/signal_detector.py: signal detector orchestration/helpers.
+
+Synchronization:
+- signal_processing/synchronization/frequency_sync.py: frequency-offset correction/synchronization.
+- signal_processing/synchronization/phase_sync.py: phase correction/synchronization.
+- signal_processing/synchronization/timing_sync.py: timing-offset estimation and symbol sampling.
+- signal_processing/synchronization/carrier_recovery.py: carrier-recovery utilities.
+The live path uses estimated/blind synchronization. Dataset integration tests can use metadata-known frequency/phase values, which is not equivalent to production behavior.
+
+Demodulation and symbols:
+- signal_processing/demodulation/bpsk.py: BPSK decisions, generally negative-to-0 and positive-to-1.
+- signal_processing/demodulation/qpsk.py: QPSK quadrant/Gray-coded symbol-to-bit decisions.
+- signal_processing/demodulation/fsk.py: FSK instantaneous-frequency/threshold-based bit decisions.
+- signal_processing/demodulation/qam.py: normalized 16QAM/Gray-coded level decisions.
+- signal_processing/symbol_processing/symbol_detector.py: symbol detection/sampling helpers.
+- signal_processing/symbol_processing/decision.py: symbol decision utilities.
+- signal_processing/symbol_processing/symbol_to_bits.py: maps modulation symbols/decisions to bit arrays.
+
+Decoding and validation:
+- signal_processing/decoding/bit_to_data.py: converts bit sequences into data/byte-like output.
+- signal_processing/decoding/deinterleaving.py: deinterleaving interface/helpers; not connected to the production path.
+- signal_processing/decoding/fec.py: FEC interface. Current implementation supports NONE/NO_FEC; actual convolutional, Reed-Solomon, or LDPC decoding is not implemented.
+- intelligence/validation/decoded_data.py: computes entropy, ones ratio, printable-character ratio, and generic payload status. A nonempty bit stream can be considered valid; this is not BER validation.
+- intelligence/validation/recovery_validation.py: checks synchronization/recovery/payload status at a high level; it does not compare with metadata ground truth.
+
+Fusion and intelligence:
+- fusion/feature_fusion.py: combines AI and DSP feature summaries.
+- fusion/evidence.py: creates weighted evidence, mostly using heuristic weights and the AI-predicted class.
+- intelligence/confidence/confidence.py: confidence aggregation/support.
+- intelligence/decision/decision.py: final modulation decision using confirmation/tentative thresholds (about 50/40 percent), which differ from the AI unknown threshold.
+- intelligence/decision/hypothesis.py: hypothesis data/handling.
+- intelligence/detection/anomaly.py: anomaly detection support.
+- intelligence/detection/unknown.py: unknown-signal support.
+- intelligence/fingerprint/fingerprint.py: signal fingerprint generation.
+- intelligence/report/report.py: intelligence/report construction.
+
+Scripts and experiments:
+- scripts/generate_dataset.py: creates IQ, WAV, and JSON metadata from generated bits and modulation rules. It defines the dataset generation bit mappings and signal conventions.
+- scripts/prepare_dataset.py: dataset preparation utilities.
+- scripts/fix_metadata_samples.py: metadata sample-count repair utility; its presence is evidence that sample-count consistency has been an issue.
+- scripts/run_analysis.py: command-line analysis runner.
+- scripts/run_dsp_analysis.py: command-line DSP analysis runner.
+- scripts/train_model.py: training entry point.
+- experiments/*.ipynb: exploratory CNN, fusion, spectrogram, SSL-MAE, and Transformer notebooks; notebooks are not the live API path.
+
+Tests:
+- tests/test_pipeline.py: pipeline integration/behavior checks.
+- tests/ai/test_ai.py: AI tests.
+- tests/dsp/test_*.py: FFT, CFO, constellation, frequency, phase, SNR, timing, and related DSP tests.
+- tests/signal_processing/test_input.py: input/loading/metadata-related tests.
+- tests/signal_processing/test_detection.py and test_segmentation.py: activity detection and segmentation tests.
+- tests/signal_processing/test_preprocessing.py: preprocessing tests.
+- tests/signal_processing/test_synchronization.py: synchronization tests.
+- tests/signal_processing/test_demodulation.py: synthetic/dataset demodulation checks. The active dataset helper loads metadata bits and prints prefix bit accuracy, but asserts only nonempty binary output, not an accuracy threshold.
+- tests/signal_processing/test_symbol_processing.py: symbol and bit mapping tests.
+- tests/signal_processing/test_decoding.py: decoding tests.
+
+4. CURRENT SIGNAL PIPELINE
+
+ACTIVELY IMPLEMENTED IN THE LIVE MASTER PATH:
+1. Input format detection for IQ/WAV.
+2. Loading complex samples.
+3. Numeric and sample-rate validation.
+4. Active-region detection/segmentation.
+5. DC removal.
+6. Amplitude normalization.
+7. FFT, PSD, bandwidth, SNR, frequency, CFO, phase, symbol-rate, constellation, and HOC measurements.
+8. Estimated frequency correction.
+9. Estimated phase correction.
+10. Timing estimate and symbol sampling.
+11. Transformer modulation inference.
+12. Feature fusion, evidence creation, and modulation decision.
+13. BPSK/QPSK/FSK/QAM demodulation.
+14. Bit-to-data/ASCII-style conversion and heuristic decoded-payload validation.
+15. Fingerprint/report assembly and backend/frontend visualization response.
+
+IMPLEMENTED BUT NOT NORMALLY CONNECTED TO THE LIVE MASTER PATH:
+- General filtering.
+- Resampling.
+- Some alternate AI representations/models.
+- FEC decoding beyond NONE/NO_FEC interface.
+- Deinterleaving.
+- Several hypothesis/anomaly/fingerprint helpers.
+- Cyclostationary analysis is implemented as a DSP module but is not a central live-pipeline decision input based on the inspected orchestration.
+
+PLANNED OR ONLY DOCUMENTED:
+- A full robust input-intelligence and segmentation stage.
+- Independent validation of every DSP/AI claim.
+- Complete FEC/deinterleaving/data recovery.
+- Ground-truth-aware BER/bit-accuracy reporting.
+- Full explainability and analyst dashboard workflows.
+
+5. DEV 1 - MACHINE LEARNING
+
+The live classifier is a Transformer defined in ai/models/transformer.py and invoked through ai/inference/predict.py. It has four per-sample input features: I, Q, magnitude, and phase. Features are normalized using observed maximum magnitude and padded or truncated to a fixed sequence length of 1,000. The output is a four-class prediction/probability distribution for BPSK, QPSK, FSK/2FSK, and QAM16/16QAM.
+
+Training is implemented in ai/training/train.py. Samples are discovered from the dataset/metadata arrangement, feature tensors are built, and a stratified train/validation/test split is used. Training uses CrossEntropyLoss and Adam. The checkpoint is saved/loaded as ai/models/transformer.pth. Training labels are class labels derived from the supported signal class/path conventions; training does not compare the metadata bits to IQ content.
+
+The production interface to the rest of the project is a prediction summary containing the predicted class and probabilities. Fusion/evidence consumes that summary together with DSP features. It is not a bit-recovery model and does not output transmitted bits.
+
+Limitations:
+- The checked-in JSON schema and the SignalMetadata class schema differ.
+- AI confidence/unknown handling uses a threshold around 70 percent, while final intelligence decision thresholds are lower/different.
+- CNN and SSL-MAE are present but not live alternatives.
+- Dataset labels can be available even when the IQ file is absent because WAV and metadata are separate modalities.
+- There is no production calibration or ground-truth bit validation.
+
+6. DEV 2A - DSP
+
+FFT: dsp/spectral/fft.py computes frequency-domain spectra from complex samples.
+PSD: dsp/spectral/psd.py estimates power spectral density.
+Spectrogram: spectrogram support exists in AI representation/frontend visualization paths; it is used for display/feature work rather than being a complete independent production decision stage.
+SNR: dsp/signal_quality/snr.py estimates signal-to-noise ratio.
+Bandwidth: dsp/spectral/bandwidth.py estimates occupied/usable bandwidth.
+Frequency: dsp/frequency/frequency_estimation.py estimates dominant/frequency characteristics.
+CFO: dsp/frequency/cfo.py estimates carrier-frequency offset and supports correction; the live path uses an estimate rather than metadata truth.
+Phase: dsp/phase/phase_estimation.py estimates phase and supports the phase-correction stage.
+Timing/symbol rate: dsp/timing/symbol_rate.py estimates symbol-rate candidates; signal_processing/synchronization/timing_sync.py estimates timing offset and samples symbols.
+Constellation: dsp/constellation/constellation.py and clustering.py calculate constellation statistics/cluster information.
+Higher-order statistics: dsp/statistical/hoc.py calculates cumulant/statistical evidence.
+Cyclostationary analysis: dsp/cyclostationary/analysis.py contains cyclostationary functionality.
+
+These modules are substantially implemented, but not every calculated value controls the final decision. Some values are used for frontend display or heuristic evidence only. In particular, the live response can compute PSD/spectral values without exposing every raw PSD detail as a full report contract.
+
+7. DEV 2B - SYNCHRONIZATION / DEMODULATION / DATA RECOVERY
+
+Synchronization:
+- Frequency synchronization is implemented using estimated CFO correction.
+- Phase synchronization is implemented using estimated phase correction.
+- Timing synchronization is implemented through timing-offset estimation and symbol sampling.
+- Carrier-recovery helpers exist.
+- Production is blind/estimated; dataset test helpers can use known metadata CFO/phase.
+
+Demodulation:
+- BPSK is implemented with sign decisions.
+- QPSK is implemented with quadrant/Gray mapping.
+- FSK is implemented using instantaneous phase/frequency behavior and a threshold derived from observed signal behavior.
+- QAM16 is implemented with normalized I/Q levels and Gray-coded decisions.
+
+Symbol processing:
+- Symbol detection and decision utilities are implemented.
+- Symbol-to-bit conversion is implemented for the supported modulation mappings.
+- Mapping assumptions must remain consistent with scripts/generate_dataset.py.
+
+Decoding:
+- Bit-to-data conversion is implemented.
+- ASCII/payload conversion is attempted in the live pipeline even though random dataset bits are not necessarily meaningful text.
+- Deinterleaving exists as an interface/helper but is not connected to normal production recovery.
+- FEC exists only as a NONE/NO_FEC-capable interface; real convolutional, Reed-Solomon, and LDPC decoding are not implemented.
+- Validation is heuristic (bit existence, entropy, ones ratio, printability, synchronization state), not a ground-truth comparison.
+
+Therefore the recovery path is implemented through raw recovered bits and basic payload checks, but complete communications decoding is partial/planned.
+
+8. CURRENT DATASET
+
+Actual current filesystem counts, excluding README/text files:
+- IQ files in data/iq class folders: 799.
+- WAV files in data/wav class folders: 800.
+- JSON metadata records in data/metadata: 800.
+- JSON metadata records in data/metadata_backup: 800.
+- Class distribution for complete modalities: 200 each for BPSK, QPSK, FSK, and QAM16. The IQ class folder is short by one because signal_0001_bpsk.iq is currently absent from data/iq/BPSK; git status shows that file as pre-existing deleted worktree content.
+- The data/iq, data/wav, data/metadata, and data/metadata_backup directories also contain README.txt files, so naive recursive file counts are 800/801/802/802 respectively.
+
+Current class/index convention is approximately:
+- signal_0001 through signal_0200: BPSK.
+- signal_0201 through signal_0400: QPSK.
+- signal_0401 through signal_0600: FSK/2FSK.
+- signal_0601 through signal_0800: QAM16/16QAM.
+
+Current JSON metadata uses keys including filename, modulation, sampling_frequency_hz, symbol_rate_hz, nominal_carrier_frequency_hz, frequency_offset_hz, phase_offset_degrees, amplitude_scale, signal_to_noise_ratio_db, samples, samples_per_symbol, IQ/WAV conventions, baseband, and bits.
+
+The main metadata set has 800 records, all valid JSON. Every record reports samples=8192, sampling_frequency_hz=1,000,000, symbol_rate_hz=100,000, and samples_per_symbol=10. Bit lengths are modulation-dependent: BPSK 819, QPSK 1638, 2FSK 2000, and 16QAM 3276. The one missing SNR value is in the otherwise complete metadata set and should be treated as a data-quality anomaly requiring future review.
+
+The metadata filename field is extensionless, for example signal_0001_bpsk. A normalized comparison must account for 2FSK versus FSK and 16QAM versus QAM16. With those aliases normalized, all 800 metadata IDs match a WAV, 799 match an IQ file, and one matches only WAV.
+
+data/metadata_backup is not merely a second set of files to count as new signals. It is a full alternate copy/generation of the 800 metadata IDs. Every compared record differs from the main metadata in at least bits and samples; the backup uses samples=20000 and different bit lengths (BPSK 2000, QPSK 4000, 2FSK 2000, 16QAM 8000). It must not be silently merged with the main metadata.
+
+CSV files are separate snapshots:
+- data/dataset.csv is stale/different from the current JSON corpus and has flat paths such as iq/signal_0001_bpsk.iq rather than the class-directory paths.
+- data/metadata/dataset.csv is closer to the JSON metadata generation but reports 20000 samples, unlike current JSON/actual IQ dimensions.
+- The README files describe a smaller starter dataset and are stale compared with the current 800-record corpus.
+
+9. DATASET / METADATA CONSISTENCY AUDIT
+
+This audit was read-only. No metadata, signal, or dataset file was changed.
+
+A. Exact WAV/audio count: 800 class-folder WAV files.
+B. Exact class-folder IQ count: 799 files. There are 800 metadata records and 800 WAV files. The missing class-folder IQ is signal_0001_bpsk.iq; git status reports it as already deleted before this handoff.
+C. Exact current JSON record count: 800 in data/metadata; 800 in data/metadata_backup.
+D. Metadata entries matched to audio/IQ: 800/800 match a WAV; 799/800 match an IQ file; 800/800 match at least one of WAV or IQ.
+E. Audio/IQ files with no metadata: zero WAV files; zero of the 799 present IQ files after normalized ID matching. The absent IQ file cannot be counted as an existing file with missing metadata.
+F. Metadata entries with no corresponding audio/IQ: zero when WAV is included; one if IQ-only correspondence is required (signal_0001_bpsk).
+G. Multiple current metadata entries intentionally referring to the same normalized signal: none. There are 800 unique references for 800 records. The backup duplicates the ID set as a separate metadata generation.
+H. Duplicate current metadata filenames/identifiers: none found.
+I. Incorrect filename references: no unmatched current JSON reference after extension/modulation alias normalization. The flat CSV paths do not match current class-folder paths and should be treated as a stale snapshot, not proof that JSON is wrong.
+J. Metadata labels disagreeing with metadata directory/file labels: none found after 2FSK/FSK and 16QAM/QAM16 normalization.
+K. Proven incorrect modulation labels: none established by this read-only audit. A label cannot be proven wrong solely from a filename; raw-signal classifier validation would be required.
+L. Proven incorrect transmitted-bit information: none established by filename matching alone. Main JSON and backup bits demonstrably differ, but that proves different metadata generations, not which bit stream is correct for every waveform.
+M. Main JSON has consistent sample rate, symbol rate, samples-per-symbol, sample count, and mostly populated offsets/SNR; one record has missing SNR. Main JSON reports 8192 samples and current IQ binary sizes are 8192 complex samples. Backup/CSV sample counts conflict with the current main corpus.
+N. Accidental wrong pairing in current ML training: not proven. Training uses class/path labels and does not use transmitted bits. Production metadata bits are not loaded. The stale CSV and backup create a clear future pairing risk if used without an explicit generation/index rule.
+O. Train/validation/test leakage: train.py uses a stratified split, but a full leakage audit depends on the exact dataset discovery and duplicate-generation selection. The 800 current IDs are unique; the backup must not be combined as extra samples. No leakage was proven by this inspection.
+P. Production bit accuracy comparison: none exists. The test helper compares metadata bits with recovered bits, but truncates to the common prefix and does not fail on low accuracy.
+
+The counts differ from the reported approximate 8,000 audio/20,000 metadata figures because the current workspace contains 800 WAVs and 800 current JSON records, not those approximate totals. The mismatch is not evidence that metadata causes bad bit accuracy. The concrete issues are multiple data generations, one absent IQ file, stale CSV/docs, and the lack of a production ground-truth comparison.
+
+10. BIT ACCURACY INVESTIGATION
+
+Production:
+- Transmitted/reference bits: not loaded by backend/services/pipeline.py.
+- Recovered bits: produced by the selected signal_processing demodulator and stored in the analysis/recovery result.
+- Alignment: none against a reference sequence.
+- Length equality: not checked against metadata.
+- Symbol/bit mapping: demodulator mappings exist and are intended to correspond to scripts/generate_dataset.py, but production does not verify them against the exact source bits.
+- Metadata as ground truth: not used by the production pipeline.
+- BER/accuracy output: absent from backend response schemas and frontend result views.
+- Recovery validation: only heuristic; nonempty/binary bits and payload characteristics can yield a valid status.
+
+Test-only behavior:
+- tests/signal_processing/test_demodulation.py loads metadata["bits"] for dataset helpers.
+- It runs synchronization/demodulation, computes compare_length=min(expected length, recovered length), compares only expected_bits[:compare_length] with recovered_bits[:compare_length], and prints accuracy.
+- It does not perform bit-shift alignment, length penalty, BER return, or a minimum accuracy assertion. Extra/missing bits are silently outside the compared prefix.
+- Some older commented code in the same test file refers to obsolete paths and similar prefix comparison logic.
+
+Possible causes of low apparent bit accuracy are therefore not isolated to metadata: blind CFO estimation, phase estimation, timing offset selection, FSK thresholding, QAM normalization, symbol boundary errors, truncation, and no alignment search can all produce errors. The current production path also differs from the dataset helper because tests may use known metadata CFO/phase while production estimates them.
+
+Read-only diagnostic examples:
+- Correct correspondence: data/metadata/BPSK/signal_0002_bpsk.json -> data/wav/BPSK/signal_0002_bpsk.wav and data/iq/BPSK/signal_0002_bpsk.iq. The normalized ID, class, and main JSON record agree.
+- IQ-only suspicious/missing-file case: data/metadata/BPSK/signal_0001_bpsk.json and its WAV exist, but data/iq/BPSK/signal_0001_bpsk.iq is absent in the current worktree.
+- Backup duplicate-generation case: metadata_backup/BPSK/signal_0001_bpsk.json references the same ID but reports samples=20000 and a different bitstream from main metadata.
+- Incorrect bit-length comparison risk: main BPSK records have 819 bits while backup BPSK records have 2000 bits; comparing either against an IQ without selecting the corresponding generation is invalid.
+- Missing metadata example: none among present WAV/IQ files after normalized matching.
+
+11. CAN THE METADATA PROBLEM BE FIXED WITHOUT DELETING EVERYTHING?
+
+Yes, based on the audit, selective repair is technically possible and safer than deleting the corpus. No repair was performed.
+
+Safest future option: preserve both original metadata generations unchanged and create a new explicit read-only index/CSV that maps each normalized signal ID to exactly one selected signal modality, metadata generation, class, sample count, and validation status. The current main JSON appears to be the generation aligned with present 8192-sample IQ dimensions; this must be verified against waveform contents before becoming authoritative.
+
+Other possible selective actions, only after validation:
+- retain valid main JSON records;
+- mark signal_0001_bpsk as IQ-missing rather than deleting its WAV/metadata;
+- quarantine/label backup records as an alternate 20000-sample generation;
+- remap only genuinely stale CSV paths;
+- regenerate only records proven corrupt by deterministic waveform/bit reproduction;
+- merge duplicates only when exact ID and generation provenance are established.
+
+Do not delete orphan/backup metadata merely because counts differ. First establish generation provenance and compare regenerated signal/bit relationships.
+
+12. CURRENT PROBLEMS / BUGS
+
+CONFIRMED
+- Production computes no BER or bit accuracy.
+- Production does not load metadata transmitted bits.
+- Dataset demodulation accuracy tests compare only a common prefix and do not assert quality.
+- Main JSON, backup JSON, and CSV snapshots disagree in generation/sample count/bit content.
+- One class-folder IQ file is absent: signal_0001_bpsk.iq; the current git status shows this as a pre-existing deletion.
+- Stale README/CSV documentation does not describe the current 800-record corpus accurately.
+- SignalMetadata field names do not directly match current JSON field names.
+- FEC beyond NONE/NO_FEC and production deinterleaving are not implemented/integrated.
+- Production uses heuristic payload validation rather than ground-truth validation.
+- ASCII decoding is attempted for arbitrary generated bit payloads.
+- AI unknown threshold and final decision thresholds are inconsistent.
+- requirements.txt/pyproject.toml do not fully describe the runtime dependencies.
+
+LIKELY
+- Blind CFO/phase/timing estimates can lower recovered-bit quality compared with metadata-assisted test runs.
+- Stale CSV or backup metadata could cause wrong pairings if a future script loads them indiscriminately.
+- QAM normalization and simple FSK thresholding may be fragile under signal variation/noise.
+- Existing tests may pass while bit accuracy is poor because they only require nonempty binary output.
+
+POSSIBLE
+- Some metadata bitstreams may belong to different generation waveforms, especially where backup/main records differ.
+- Stratified splitting could leak related samples if future dataset discovery combines generations or duplicates.
+- Frequency estimation that prefers a strongest positive component may mishandle negative offsets or modulated spectra.
+
+UNKNOWN
+- Whether main JSON bits are correct for every current waveform has not been proven by a deterministic regeneration/hash/content audit.
+- Exact production bit accuracy/BER distribution is unknown because production does not calculate it.
+- Whether any modulation label is wrong cannot be established from filenames alone.
+
+13. CURRENTLY WORKING FEATURES
+
+- Raw IQ loading in interleaved float32 I,Q form.
+- WAV loading according to the documented two-channel convention, subject to the installed WAV reader supporting the files' float format.
+- Input validation and active-region detection.
+- DC removal and normalization.
+- Broad DSP analysis modules including FFT, PSD, bandwidth, SNR, frequency/CFO, phase, timing, constellation, HOC, and cyclostationary code.
+- Transformer-based four-class inference through the backend pipeline.
+- Fusion/evidence/final modulation decision.
+- BPSK, QPSK, FSK, and QAM16 demodulation code that produces binary bits.
+- Basic bit-to-data and heuristic recovery validation.
+- Fingerprint/report assembly.
+- FastAPI backend routes and React/Vite result presentation, subject to the current worktree's existing frontend/backend changes.
+- Unit/integration test coverage across AI, DSP, input, synchronization, demodulation, decoding, and pipeline slices.
+
+14. PLANNED FEATURES
+
+Implemented or partially implemented:
+- Input intelligence and format detection: implemented at basic level.
+- Signal detection/segmentation: implemented.
+- Preprocessing: DC removal/normalization live; filtering/resampling available but not live.
+- DSP analysis: broad module coverage, with some results heuristic/display-only.
+- AI analysis: Transformer live; CNN/SSL-MAE additional implementations not live.
+- Feature fusion/intelligence: implemented in heuristic form.
+- Hypothesis/decision: modules exist; not every hypothesis path is wired into production.
+- Synchronization/demodulation/symbol-to-bits: implemented for supported modulations, with robustness limitations.
+- Decoding: basic bit/data conversion; FEC/deinterleaving incomplete.
+- Validation: heuristic recovery validation, not BER.
+- Fingerprinting/report: modules and response/report behavior exist.
+
+Future or optional work:
+- robust signal detection/segmentation and quality gating;
+- independently validated DSP/AI evidence and calibrated confidence;
+- full synchronization loops and robust carrier/timing recovery;
+- complete FEC, deinterleaving, framing, and payload decoding;
+- reference-aware BER/bit-accuracy evaluation with explicit alignment/length policy;
+- explainability tied to actual evidence;
+- authoritative dataset/metadata index and generation provenance;
+- analyst dashboard workflows beyond current visualizations;
+- stronger fingerprinting and unknown-signal reasoning.
+
+15. INTEGRATION CONTRACTS
+
+Common IQ representation:
+- complex-valued NumPy samples, represented as I + jQ;
+- raw IQ file convention: interleaved little-endian float32 I,Q;
+- WAV convention: two-channel float32 WAV, channel 1 I and channel 2 Q;
+- current metadata sample rate: 1,000,000 Hz;
+- current metadata symbol rate: 100,000 Hz;
+- current samples-per-symbol: 10.
+
+Phase/frequency conventions:
+- phase correction operates on complex samples using the project synchronization helpers;
+- frequency offsets are in Hz and may be positive, negative, or zero;
+- nominal carrier is baseband/zero in current metadata;
+- exact sign/rotation assumptions must follow the existing synchronization and generator implementations, not an invented convention.
+
+Modulation labels:
+- canonical classes in model/application: BPSK, QPSK, FSK, QAM16;
+- metadata may use 2FSK and 16QAM;
+- path resolver must normalize those aliases before matching.
+
+Dev 1 -> Fusion/Intelligence:
+- Transformer inference returns predicted class plus probability/confidence information for four classes;
+- fusion consumes that result with DSP summary features;
+- no reference bits are returned by Dev 1.
+
+Dev 2A -> Fusion/Intelligence:
+- DSP provides numeric summaries such as FFT/PSD/bandwidth/SNR/frequency/CFO/phase/symbol rate/constellation/HOC evidence;
+- values may be display/evidence inputs and are not automatically ground truth.
+
+Dev 2B -> Validation/Recovery:
+- synchronization accepts complex samples and rate/offset-related parameters and returns corrected samples/offsets or sampled symbols;
+- demodulators accept corrected samples or symbols plus samples-per-symbol where required and return binary arrays;
+- decoding accepts binary arrays and can produce data/payload representations;
+- current validation accepts recovery state/bit payload characteristics, not a reference-bit contract.
+
+Metadata contract:
+- current JSON keys are filename, modulation, sampling_frequency_hz, symbol_rate_hz, nominal_carrier_frequency_hz, frequency_offset_hz, phase_offset_degrees, amplitude_scale, signal_to_noise_ratio_db, samples, samples_per_symbol, conventions, baseband, and bits;
+- SignalMetadata uses a different internal naming schema and needs explicit translation;
+- main metadata and backup metadata are different generations and must never be mixed implicitly.
+
+Bit mapping:
+- BPSK sign mapping, QPSK Gray quadrants, FSK frequency decisions, and normalized 16QAM Gray levels are defined in demodulators and should be checked against scripts/generate_dataset.py before any accuracy claim.
+
+16. RECOMMENDED NEXT STEPS
+
+1. Establish a read-only authoritative dataset index selecting main JSON versus backup and recording IQ/WAV availability and generation.
+2. Verify waveform-to-bit provenance on a small representative sample by deterministic regeneration or a trusted generator/hash relationship before changing metadata.
+3. Add a separate diagnostic/evaluation path that loads the selected metadata bits, performs explicit synchronization/bit alignment, reports length differences, BER, bit accuracy, and confidence intervals. Do not put this into the live pipeline until the contract is agreed.
+4. Compare production blind synchronization with metadata-assisted synchronization to isolate synchronization from demodulation errors.
+5. Add accuracy assertions to dataset demodulation tests only after alignment and generation selection are defined.
+6. Resolve the one missing IQ file as a tracked data/worktree decision; do not delete its matching WAV/metadata.
+7. Deprecate or clearly label stale CSV/README generations rather than allowing implicit discovery.
+8. Translate the JSON metadata schema explicitly into SignalMetadata or stop using that class for the current JSON until the mapping is defined.
+9. Implement/verify framing, deinterleaving, and actual FEC only if the communications protocol requires them.
+10. Align dependency declarations with actual backend/ML/frontend execution requirements.
+
+17. FILES THAT MUST NOT BE TOUCHED
+
+Protect these until a deliberate, separately reviewed change is approved:
+- data/iq/**
+- data/wav/**
+- data/metadata/**
+- data/metadata_backup/**
+- data/dataset.csv
+- data/metadata/dataset.csv
+- ai/models/transformer.pth
+- scripts/generate_dataset.py
+- scripts/fix_metadata_samples.py
+- backend/services/pipeline.py
+- project_paths.py
+- signal_processing/demodulation/**
+- signal_processing/synchronization/**
+- signal_processing/decoding/**
+- tests/signal_processing/test_demodulation.py
+
+Also preserve existing user/worktree edits and deletions unless the user explicitly requests a review or repair of those exact changes. In the inspected worktree, git status already showed modifications/deletions in .gitignore, backend/api/analysis.py, backend/api/signal.py, backend/services/pipeline.py, frontend files, deletion of data/iq/BPSK/signal_0001_bpsk.iq, and an untracked flowchart.txt. This handoff creation does not revert or modify them.
+
+IMPORTANT HANDOFF NOTES
+
+1. Only learning.txt was created for this task; the audit was read-only.
+2. The live production pipeline is backend/services/pipeline.py.
+3. Production does not calculate BER or bit accuracy and does not load metadata bits.
+4. The current corpus is 800 WAVs, 799 class-folder IQ files, and 800 main JSON metadata records, not 8,000/20,000.
+5. signal_0001_bpsk.iq is absent from data/iq/BPSK and is already reported as a deleted worktree file; do not infer that this task deleted it.
+6. All 800 main metadata IDs match WAVs after normalizing 2FSK/FSK and 16QAM/QAM16; 799 match IQ files.
+7. The 800-record metadata backup is a different generation: it differs in bits and sample counts and must not be mixed with main metadata.
+8. The current accuracy test compares only the common prefix and asserts only that recovered bits exist and are binary.
+9. Blind synchronization, demodulation, symbol timing, truncation, and alignment remain alternative explanations for poor bit accuracy; metadata count mismatch alone is not proof.
+10. Before any code or data change, define the authoritative metadata generation, exact signal-to-metadata index, bit alignment policy, and BER contract.
+
+NEW DIAGNOSTIC FINDINGS - 2026-09-10
+
+- The symbol-rate estimator returns `symbol_rate_hz`; the live pipeline and standalone DSP runner were reading the nonexistent `symbol_rate` key. The live report previously displayed 0 because of this consumer mismatch.
+- The consumer mismatch was corrected in backend/services/pipeline.py and scripts/run_dsp_analysis.py. A representative WAV analysis now propagates a positive estimate into DSP analysis, the report, and frontend feature data.
+- The estimator itself remains insufficiently accurate on representative existing IQ files: observed estimates were approximately 35.3 kHz for QPSK, 125 kHz for FSK, and 1.46 kHz for QAM16 against approximately 100 kHz metadata. This is a separate estimator-quality issue, not solved by the key correction.
+- The standalone DSP runner also required a nonnegative frequency input for phase estimation; it was aligned with the live pipeline's `abs(est_freq)` behavior.
+- The original estimator used only an FFT of mean-removed magnitude-squared IQ, selected the strongest candidate, and applied a limited harmonic heuristic. That method can select modulation artifacts such as approximately 35.3 kHz, 125 kHz, or 1.46 kHz instead of the baud rate.
+- The estimator now evaluates transition-energy periodicity for rectangular PSK/QAM-like signals, instantaneous-frequency state durations for FSK-like signals, and retains the original magnitude-squared FFT as fallback. It returns candidate rates, scores, method, confidence, status, and frequency-resolution error estimate.
+- Controlled synthetic tests recovered 50/100/200 kHz QPSK and QAM16 within 5% at 20 dB, and FSK within a documented 10% tolerance at 20 dB; lower-SNR cases are checked for explicit confidence/status rather than being forced to a ground-truth value.
+- Representative real IQ results are QPSK 100.06 kHz (high confidence), QAM16 90.54 kHz (high waveform confidence but approximately 9.5% from metadata), and FSK 125 kHz with low confidence. The FSK result is not forced to the metadata 100 kHz because the existing waveform evidence and provenance audit disagree.
+
+==================================================
+FSK INVESTIGATION & DASHBOARD AUDIT (2026-09-10)
+==================================================
+
+1. ROOT CAUSE OF FSK 125 KHZ DISCREPANCY & MODULATION INDEX:
+- Physical Signal Provenance: The FSK dataset files in data/iq/FSK/ (including signal_0401_fsk.iq through signal_0600_fsk.iq, 187 of 200 files) were physically generated with 8 samples per symbol at a sampling rate of 1,000,000 Hz.
+- Physical Symbol Rate: Rs = Fs / 8 = 125,000 Baud (125 kHz).
+- Modulation-Index Mathematical Terminology:
+  * Delta_f = Frequency deviation from carrier center ~= 60 kHz (62.5 kHz)
+  * Tone separation = 2 * Delta_f ~= 120 kHz (125.0 kHz)
+  * Symbol rate Rs = 125 kBaud
+  * Conventional CPFSK Modulation Index: h = 2 * Delta_f / Rs = Tone_Separation / Rs ~= 120 kHz / 125 kBaud = 0.96 (or 125 kHz / 125 kBaud = 1.0)
+- Waveform Evidence: Analysis of the instantaneous frequency (d(phi)/dt) shows two discrete frequency states at -59.2 kHz and +60.0 kHz (tone spacing ~120 kHz). The dwell time distribution for state runs exhibits sharp clusters at exact integer multiples of 8 samples:
+  * 1 symbol (run length 8): 121 occurrences (mean 8.05 samples)
+  * 2 symbols (run length 16): 48 occurrences
+  * 3 symbols (run length 24): 24 occurrences
+  * 4 symbols (run length 32): 10 occurrences
+  * 5+ symbols: runs at 40, 48, 56, 64 samples.
+- Metadata Disagreement: The JSON metadata file (signal_0401_2fsk.json) lists symbol_rate_hz: 100000 and samples_per_symbol: 10, while containing 2000 bits. This is a genuine provenance/generation discrepancy between the binary waveform and the metadata record.
+- Decision on 125 kHz: 125 kHz is physically CORRECT for the IQ waveform. The estimator must not be forced to 100 kHz. Both the measured waveform estimate (125 kBaud) and metadata reference (100 kBaud) are preserved and explicitly exposed with status "Waveform/metadata disagreement".
+
+2. CANDIDATE RATE ANALYSIS:
+- Method `instantaneous_frequency_state_duration` identifies samples_per_symbol = 8.0 -> 125,000 Baud.
+- Spectral Candidates (|x|^2 FFT): Due to the constant-envelope nature of FSK, the magnitude-squared spectrum contains no fundamental symbol timing peak, only noise and switching artifacts (e.g. 61.8 kHz, 59.3 kHz, 37.5 kHz). The FSK-specific instantaneous frequency estimator correctly bypasses the envelope spectrum.
+
+3. CLASSIFICATION SCORES AUDIT & BUG FIX:
+- Source: Model logits -> softmax in ai/classification/confidence.py -> true class probabilities.
+- Probabilities sum to 1.0 (100.0%).
+- Bug Found & Fixed: In backend/services/pipeline.py, predictionBreakdown previously divided by 100 only if prob > 1.0. For low-probability classes (< 1.0%), this caused values like 0.9% to be exported as 0.9 (90%), resulting in percentages adding up to >100% (e.g. FSK 98%, BPSK 11%, QAM16 10%). This was corrected to always divide by 100.0, ensuring predictionBreakdown strictly sums to 1.0.
+
+4. CONFIDENCE VALUE AUDIT (98%, 98.5%, 0.89):
+- 98.5%: AI Model (Transformer) Softmax Confidence for the winning predicted class (FSK).
+- 98%: Integer-rounded display presentation of AI confidence.
+- 0.89: Multi-Modal Evidence Score computed by fusion/evidence.py aggregating:
+  * AI Model Confidence: 0.50 * 0.985 = 0.4925
+  * SNR Quality Factor: 0.20 * 0.680 = 0.1360
+  * HOC Consistency Factor: 0.15 * 0.850 = 0.1275
+  * Bandwidth Profile Factor: 0.15 * 0.900 = 0.1350
+  * Total = 0.891 -> 0.89.
+
+5. FREQUENCY DEFINITIONS & FSK CARRIER CENTER (CFO) RECONCILIATION:
+- Peak Frequency (-63,616 Hz): Absolute maximum magnitude bin in the 2-sided FFT spectrum (-Fs/2 to +Fs/2).
+- Carrier Frequency Offset (CFO) for FSK:
+  * The generic single-sided search finds the dominant positive tone (+63.2 kHz).
+  * For symmetric 2FSK baseband signals, dual-tone peak detection in `dsp/frequency/cfo.py` locates both f_lower (-61.7 kHz) and f_upper (+63.2 kHz).
+  * True FSK Carrier Center: f_center = (f_upper + f_lower) / 2 = +733.6 Hz ~= 0 Hz (matching true DC baseband carrier).
+  * The pipeline exposes the true carrier center CFO (+733.6 Hz), tone separation (125.0 kHz), frequency deviation (62.5 kHz), and dominant positive tone (+63.2 kHz) with unambiguous definitions.
+
+6. BANDWIDTH RECONCILIATION (262.9 kHz vs 271.8 kHz):
+- Metric Definition: Consistently defined across pipeline, backend, and CLI as "Occupied Bandwidth (99% Power)" computed via cumulative periodogram PSD integration in dsp/spectral/bandwidth.py.
+- Value Reconciliation: The difference between 262.9 kHz (e.g. signal_0405_fsk.iq, 262.8 kHz) and 271.8 kHz (signal_0401_fsk.iq, 271.7 kHz) represents natural sample-to-sample statistical variation across different pseudo-random bit sequences in the dataset, not a code or algorithmic discrepancy.
+- Terminology Clarification: Renamed "3dB Occupied Bandwidth" to "Occupied Bandwidth (99% Power)" to avoid conflating 99% OBW with 3dB half-power bandwidth.
+
+7. HIGHER-ORDER CUMULANTS (C40, C42):
+- C40 = 0.003: Reflects circular constellation symmetry.
+- C42 = 0.875: Reflects constant-envelope power variance of FSK (theoretical 1.0 in noiseless signal, ~0.88 with 10-12 dB SNR).
+
+8. RF FINGERPRINTING AUDIT:
+- "RF-FP-526B7D25785F70B4" is a SHA-256 hash of extracted scalar metrics (modulation, CFO, SNR, bandwidth, PAPR).
+- Terminology Clarification: Described as "Derived RF feature-hash identifier" rather than "Unique cryptographic emitter RF signature", preserving honest physical attribution.
+

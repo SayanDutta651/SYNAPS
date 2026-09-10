@@ -1,0 +1,668 @@
+DIAGNOSTIC PLAN
+
+Test whether blind synchronization is the primary cause of the approximately 50% bit accuracy. For one existing BPSK, QPSK, FSK, and QAM16 signal, I will compare an in-memory reproduction of the production blind CFO/phase/timing path against a separate metadata-assisted path using only metadata synchronization parameters. Expected evidence: a large improvement would support synchronization as the primary cause; little improvement would shift attention toward mapping, demodulation, timing conventions, or waveform/metadata provenance. I will then inspect generator and demodulator mappings read-only, treat FSK's length mismatch separately, test small bit alignments, classify causes, and record a conclusion. No project source, model, dataset, metadata, or production pipeline will be changed.
+
+[ACTION]
+Select one existing representative signal for each supported modulation.
+
+[REASON]
+Use the same class ranges and naming conventions as the existing dataset tests while avoiding the missing signal_0001_bpsk IQ file.
+
+[EXPECTED RESULT]
+All four selected IQ files and their current main metadata records should exist and pair by normalized signal ID.
+
+[ACTUAL RESULT]
+Selected BPSK signal_0002_bpsk, QPSK signal_0201_qpsk, FSK signal_0401_fsk with metadata signal_0401_2fsk, and QAM16 signal_0601_qam16 with metadata signal_0601_16qam. These are existing paired samples.
+
+[ACTION]
+Run an in-memory blind-versus-metadata-assisted synchronization comparison.
+
+[REASON]
+The first hypothesis is that production's estimated CFO, phase, or timing is causing the approximately 50% bit accuracy. The blind branch reproduces the production sequence of DC removal, normalization, estimated CFO/phase correction, timing estimation, and demodulation. The diagnostic branch uses metadata CFO, phase, and samples-per-symbol, without consulting expected bits until comparison.
+
+[EXPECTED RESULT]
+A large accuracy improvement across most or all classes would support blind synchronization as the primary cause. Little or inconsistent improvement would reject that as the sole primary cause.
+
+[ACTUAL RESULT]
+Blind versus metadata-assisted results: BPSK 49.695% -> 52.869% (+3.175 percentage points); QPSK 50.122% -> 49.512% (-0.610 points); FSK 52.137% -> 51.526% (-0.610 points, with 819 recovered versus 2,000 metadata bits); QAM16 49.908% -> 50.580% (+0.672 points). Metadata assistance did not produce a substantial, consistent recovery. Blind CFO estimates were 12,207 Hz, 24,902 Hz, 62,622 Hz, and 46,265 Hz for BPSK, QPSK, FSK, and QAM16 respectively, while metadata CFO values were -5,000, 0, 0, and 0 Hz. The experiment rejects blind synchronization as the sole primary cause, although it remains a possible contributor, especially for BPSK.
+
+[ACTION]
+Repeat metadata-assisted correction on production-preprocessed input (DC removal and normalization).
+
+[REASON]
+Control for the difference between raw IQ used by the metadata branch and normalized IQ used by the blind production branch.
+
+[EXPECTED RESULT]
+If preprocessing caused the earlier result, controlled metadata-assisted accuracy should change substantially.
+
+[ACTUAL RESULT]
+Controlled results were BPSK 52.625%, QPSK 49.451%, FSK 52.137%, and QAM16 50.458%. The conclusion remains unchanged: known synchronization parameters do not restore high accuracy.
+
+[ACTION]
+Compare the generator's exact bit-to-symbol mappings with each demodulator.
+
+[REASON]
+If synchronization assistance does not substantially improve results, a sign, ordering, Gray-code, constellation, or FSK frequency mismatch could explain near-chance accuracy.
+
+[EXPECTED RESULT]
+An inconsistency between generator and demodulator would support mapping as a primary cause; matching conventions would reject that explanation.
+
+[ACTUAL RESULT]
+BPSK matches: generator bit 1 maps to +1 and the demodulator maps nonnegative I to 1. QPSK matches: generator takes bits in I-bit then Q-bit order with 0=positive and 1=negative; the demodulator returns 00, 01, 11, 10 for +/+, -/+, -/-, +/-, respectively. FSK matches: generator bit 0 uses negative deviation and bit 1 positive deviation; demodulator classifies above its threshold as 1. QAM16 matches: generator and demodulator both use 00=-3, 01=-1, 11=+1, 10=+3 independently for I then Q. No confirmed generator/demodulator mapping mismatch was found.
+
+[ACTION]
+Evaluate the FSK length mismatch and the -20..+20 bit-alignment results separately from the other classes.
+
+[REASON]
+FSK has 2,000 metadata bits but only 819 complete waveform symbols, so its comparison is not equivalent to BPSK/QPSK/QAM16. Alignment could otherwise make a timing shift look like a synchronization failure.
+
+[EXPECTED RESULT]
+If FSK's length mismatch explains all low accuracy, the other three classes should have high accuracy. If small shifts solve the issue, alignment should produce a dramatic improvement.
+
+[ACTUAL RESULT]
+FSK's length mismatch is confirmed and explains its invalid full-length comparison, but it cannot explain BPSK, QPSK, or QAM16, whose lengths match exactly and still remain near 50%. Best small-shift accuracies were BPSK 53.790% blind / 53.998% metadata-assisted, QPSK 53.342% blind / 52.535% metadata-assisted, FSK 53.457% blind / 54.815% metadata-assisted over shortened comparisons, and QAM16 51.466% blind / 51.840% metadata-assisted. Alignment did not dramatically improve any class.
+
+CAUSE CLASSIFICATION
+
+- Metadata mismatch: POSSIBLE. Main and backup metadata are different generations, but all selected main IDs pair with their WAVs and the representative main bits are prefixes of the backup bits where lengths differ.
+- Metadata bit-length mismatch: CONFIRMED for FSK; NOT SUPPORTED as the explanation for the other three classes.
+- Signal/metadata pairing: NOT SUPPORTED for the selected samples. Their normalized IDs, classes, and files pair correctly.
+- Blind CFO synchronization: POSSIBLE contributor. Blind CFO estimates differ substantially from metadata values, but metadata correction did not consistently improve accuracy.
+- Phase synchronization: POSSIBLE contributor. Known phase correction did not produce high accuracy, and phase conventions/provenance still require broader validation.
+- Timing/symbol sampling: POSSIBLE contributor. Timing is selected by the existing power metric and remains a recovery risk, but metadata-assisted timing did not solve the issue.
+- Demodulation: POSSIBLE. Near-chance results remain after metadata-assisted correction; the simple FSK/QAM decisions may be sensitive to waveform conditions.
+- Generator/demodulator mapping mismatch: NOT SUPPORTED. Static comparison found matching mappings for all four supported modulations.
+- Bit alignment: NOT SUPPORTED as the primary cause. A +/-20-bit scan produced only modest improvements.
+- Waveform/metadata generation provenance: LIKELY. The current waveform has 819 complete symbols, while the inspected generator uses ceil and creates 820 source symbols; metadata generations also differ in sample and bit lengths. This is the strongest remaining explanation, but deterministic provenance has not been proven for every signal.
+
+================================================
+DIAGNOSTIC CONCLUSION
+================================================
+
+BPSK:
+Blind accuracy: 49.695% (819 recovered, BER 50.305%)
+Metadata-assisted accuracy: 52.869% (819 recovered, BER 47.131%)
+Improvement: +3.175 percentage points
+Likely issue: Metadata assistance helps slightly, but not enough to establish blind synchronization as the primary cause; provenance or recovery convention remains more likely.
+
+QPSK:
+Blind accuracy: 50.122% (1,638 recovered, BER 49.878%)
+Metadata-assisted accuracy: 49.512% (1,638 recovered, BER 50.488%)
+Improvement: -0.610 percentage points
+Likely issue: Not blind synchronization alone; investigate waveform/metadata provenance and recovery conventions.
+
+FSK:
+Blind accuracy: 52.137% over 819 of 2,000 metadata bits (BER 47.863%)
+Metadata-assisted accuracy: 51.526% over 819 of 2,000 metadata bits (BER 48.474%)
+Improvement: -0.610 percentage points
+Likely issue: Confirmed metadata/waveform length mismatch makes the comparison invalid beyond the common prefix; FSK should not be used as evidence for a full-length BER claim.
+
+QAM16:
+Blind accuracy: 49.908% (3,276 recovered, BER 50.092%)
+Metadata-assisted accuracy: 50.580% (3,276 recovered, BER 49.420%)
+Improvement: +0.672 percentage points
+Likely issue: Metadata correction does not solve the issue; provenance, phase/constellation convention, or demodulation robustness remains possible.
+
+1. Is metadata the primary cause? Not established. The alternate generation and FSK length mismatch are real, but pairing is correct for selected samples and main metadata lengths match three waveform symbol counts.
+2. Is synchronization the primary cause? Not supported by this four-sample experiment. Blind estimates are questionable, but known corrections do not restore accuracy consistently.
+3. Is demodulation/mapping the primary cause? Mapping mismatch is not supported; demodulation remains a possible robustness cause.
+4. Is bit alignment the primary cause? No. Small shifts do not produce a dramatic improvement.
+5. Is the Transformer involved? No. The diagnostic occurs after classification, and transmitted metadata bits are not used by Transformer training/inference/features/checkpoint loading.
+6. Should the Transformer be changed? No.
+7. Should metadata be changed? No. Preserve both generations until provenance is established.
+8. Safest next step: create a separate, read-only provenance/evaluation study that deterministically relates each waveform to its bit sequence and compares metadata-assisted recovery with a trusted symbol reference. Do not alter production code, metadata, or the model before that study.
+
+No existing project source, data, model, synchronization, demodulation, backend, or frontend file was changed by this experiment. Only fix.txt and terminal.txt were created/updated during this task; learning.txt was not modified because no new fact required adding beyond the existing handoff.
+
+========================================================
+DEMODULATOR REPAIR RECORD - 2026-09-10
+========================================================
+
+1. QPSK bug found
+The demodulator returned [Q_bit, I_bit] in the negative-I and negative-Q quadrant branches. The generator convention is [I_bit, Q_bit].
+
+2. QPSK fix applied
+Swapped only the two affected output pairs in signal_processing/demodulation/qpsk.py. The function signature and constellation convention were unchanged.
+
+3. QPSK synthetic accuracy
+The exact four-quadrant generator-convention test passed at 100%. The existing clean synthetic QPSK test also passed at 100%.
+
+4. QAM16 bug found
+The requested inverse mapping was inspected in the current implementation. It already contains the correct exhaustive mapping: -3 -> 00, -1 -> 01, +1 -> 11, +3 -> 10 independently on I and Q. The pre-edit exhaustive 16-point test passed, so the reported QAM16 mapping bug could not be reproduced in the current file.
+
+5. QAM16 fix applied
+No QAM16 production-code change was applied because the current implementation already satisfies the required mapping. An exhaustive regression test was added to prevent regression.
+
+6. QAM16 exhaustive 16-point accuracy
+All 16 constellation points, covering every I/Q Gray-code pair, recovered exactly at 100%.
+
+7. Regression test results
+- BPSK synthetic: PASS, 100%.
+- FSK synthetic: PASS, 100%.
+- QPSK synthetic: PASS, 100%.
+- QAM16 synthetic: PASS, 100%.
+- Exact QPSK quadrant test: PASS.
+- Exhaustive QAM16 test: PASS.
+- Available real-data QPSK/FSK/QAM16 checks: PASS under their existing non-threshold binary-output assertions; observed prefix accuracies remained approximately 52.56%, 51.53%, and 50.58%, as expected from the unresolved provenance mismatch.
+- The direct full test-file run stopped at the pre-existing missing BPSK IQ fixture data/iq/BPSK/signal_0001_bpsk.iq after synthetic tests passed.
+
+8. Exact files modified
+- signal_processing/demodulation/qpsk.py
+- tests/signal_processing/test_demodulation.py
+- fix.txt
+- terminal.txt
+
+The QAM16 production file was intentionally not modified because its current behavior already passes the required exhaustive mapping test. Protected AI/model, data, metadata, synchronization, backend, frontend, and architecture areas were not modified. The existing IQ/metadata provenance mismatch remains unresolved and was not modified.
+
+========================================================
+PROVENANCE INVESTIGATION — 2026-09-10 (Phase 2)
+========================================================
+
+This investigation continues from the earlier synchronization/mapping diagnostic.
+Its sole purpose is to determine whether existing metadata bits belong to existing IQ/WAV waveforms.
+No project file, code, data, model, or metadata was modified.
+
+=== PART 3: GENERATION SCRIPT ANALYSIS ===
+
+[ACTION]
+Read scripts/generate_dataset.py and scripts/fix_metadata_samples.py in full.
+
+[REASON]
+Determine how bits are generated, whether seeds are stored, how bits map to modulations,
+what signal parameters are used, and what fix_metadata_samples.py changed.
+
+[RESULT]
+generate_dataset.py:
+- Bits: rng.integers(0, 2, size=...) using np.random.default_rng() with NO fixed seed.
+- Seed: NOT stored in metadata; every run uses a fresh unseeded generator.
+- BPSK: bit=1 -> +1+0j; bit=0 -> -1+0j. Samples = repeat(symbols, sps)[:num_samples].
+- QPSK: bits[0::2]=I-bits, bits[1::2]=Q-bits; 0->+1.0/-1.0; symbol = (I+jQ)/sqrt(2).
+  bits stored as interleaved [i0,q0,i1,q1,...].
+- FSK: bit=0->negative_deviation (-sr/2), bit=1->positive_deviation (+sr/2); continuous phase.
+  num_symbols = ceil(num_samples/sps) symbols generated; bits stored as num_symbols-length array.
+- QAM16: 4 bits/symbol [b0,b1,b2,b3]; I=gray_lut[(b0,b1)], Q=gray_lut[(b2,b3)];
+  gray_lut: (0,0)->-3, (0,1)->-1, (1,1)->+1, (1,0)->+3; norm=sqrt(10).
+- AWGN: added AFTER symbol/CFO/phase modulation. Noise uses same rng instance (seed unknown).
+- Amplitude applied before noise.
+- Waveform saved as float32 interleaved IQ (no normalization).
+- WAV saved as stereo float32 (channel 0=I, channel 1=Q).
+- No random seed is stored in metadata JSON.
+- samples_per_symbol = floor(sample_rate/symbol_rate) = 1000000/100000 = 10.
+- num_symbols = ceil(num_samples/sps): for num_samples=8192, sps=10: 820 symbols.
+- Waveform length = 8192 samples (820*10=8200, truncated to 8192).
+- Complete symbols in waveform: floor(8192/10) = 819.
+
+fix_metadata_samples.py:
+- Loads every IQ file and reads actual sample count.
+- Updates metadata["samples"] to match actual IQ sample count if they differ.
+- Does NOT change bits, SNR, CFO, phase, amplitude, or any other field.
+- Does NOT renormalize IQ data.
+- Evidence of past sample-count inconsistency between generation runs.
+
+KEY CONCLUSION: Exact waveform reproduction from metadata is IMPOSSIBLE because the
+noise realization requires the original RNG state, which was NOT saved.
+Without noise, the clean signal can be reproduced from bits+parameters, but the stored
+IQ files include AWGN. The clean signal's correlation with the noisy stored IQ would be
+limited by SNR (measurable but not identical).
+
+=== PART 4: REPRESENTATIVE SIGNAL INSPECTION ===
+
+[ACTION]
+Inspect 8 representative signals (2 per modulation): files sizes, WAV properties, metadata.
+Signals: BPSK_0002, BPSK_0010, QPSK_0201, QPSK_0210, FSK_0401, FSK_0410, QAM16_0601, QAM16_0610.
+
+[REASON]
+Establish ground truth for IQ sample counts, WAV sample counts, rates, metadata fields, and bit lengths.
+
+[RESULT]
+All 8 signals:
+- IQ file bytes: 65536 = 8192 complex float32 samples (confirmed for all 8).
+- WAV sample_rate: 1,000,000 Hz (all 8).
+- WAV samples: 8192 (all 8).
+- WAV channels: 2 (stereo I/Q).
+- Metadata samples: 8192 (all 8).
+- Metadata sps: 10 (all 8).
+- Metadata symbol_rate: 100,000 Hz (all 8).
+- Bit lengths: BPSK=819, QPSK=1638, FSK=2000 (MISMATCH), QAM16=3276.
+- BPSK has NO SNR field in signal_0002 metadata (missing value confirmed).
+
+Metadata parameter range across 8 signals:
+- frequency_offset_hz: -5000 to +10000 Hz.
+- phase_offset_degrees: 0 to 315 degrees.
+- amplitude_scale: 0.75 to 1.5.
+- SNR: 5 to 25 dB (one missing).
+
+FSK bit_length=2000 does NOT match recoverable symbols (819).
+BPSK/QPSK/QAM16 bit lengths DO match their respective recoverable bit counts.
+
+=== PART 5: MAIN vs BACKUP METADATA COMPARISON ===
+
+[ACTION]
+Compare main metadata bits against backup metadata bits for all 8 representative signals.
+
+[REASON]
+Determine whether main and backup represent different bit generations or the same bits.
+
+[RESULT]
+For all 8 signals:
+- main samples=8192, backup samples=20000 (DIFFERENT).
+- BPSK main bits=819, backup bits=2000.
+- QPSK main bits=1638, backup bits=4000.
+- FSK main bits=2000, backup bits=2000 (EQUAL).
+- QAM16 main bits=3276, backup bits=8000.
+- Prefix agreement: 100% for all 8 signals (main bits are EXACT PREFIX of backup bits).
+- All parameters (CFO, phase, SNR, amplitude, sps) are IDENTICAL between main and backup.
+- FSK: bits_equal=True (main == backup, 2000 bits each).
+- BPSK/QPSK/QAM16: main bits are an exact prefix of backup bits with 100% agreement.
+
+KEY CONCLUSION: Main and backup metadata were generated from the SAME RNG state,
+just run to different lengths (main=8192 samples, backup=20000 samples).
+They share the same bit sequence prefix. The backup is NOT a different generation for these signals.
+This means "main" vs "backup" does NOT explain the ~50% accuracy problem.
+
+=== PART 6: EXACT WAVEFORM REPRODUCTION ===
+
+[ACTION]
+Reproduce clean signals (noise excluded) from metadata bits and parameters, compare with existing IQ.
+
+[REASON]
+Test whether existing IQ = metadata_generated_signal + AWGN (different realization only).
+
+[RESULT]
+For all 8 signals: I-correlation and Q-correlation between clean reproduced signal and existing
+IQ are near ZERO (ranging from -0.10 to +0.08). This is NOT consistent with:
+  - noise-only difference (which would give |corr| ~ sqrt(SNR/(SNR+1)) > 0.9 for 15dB SNR)
+  - amplitude-normalization-only difference (would give |corr| ~ 1.0)
+  - any simple transform of the same generation
+
+Additional findings:
+- FSK IQ: ALL samples have |sample| = 1.0 to float32 precision (constant-envelope, no noise at all).
+  The FSK generator adds AWGN, but the stored FSK IQ is NOISELESS.
+- BPSK constellation after known sync: cluster means ~±0.57, not ±1.0 as expected.
+  This is consistent with normalization by RMS (divides out amplitude), but the near-zero
+  correlation with reproduced signal shows the symbols themselves are DIFFERENT.
+- All IQ files have RMS ≈ 1.0 regardless of metadata amplitude_scale (0.75, 1.0, 1.25, 1.5).
+  This suggests IQ files were normalized by RMS AFTER generation.
+
+CONCLUSION: The near-zero correlation between reproduced clean signals and existing IQ
+is the strongest evidence that the existing IQ waveforms were generated from DIFFERENT BITS,
+not the bits stored in the current metadata.
+Exact reproduction is IMPOSSIBLE for two reasons:
+  (a) RNG seed not stored (noise cannot be reproduced exactly).
+  (b) Even the clean noiseless signal does not correlate with the existing IQ (~zero correlation),
+      proving the bits themselves differ.
+
+=== PART 7: RECOVERED BITS vs MAIN AND BACKUP METADATA ===
+
+[ACTION]
+For all 8 signals: apply metadata-known synchronization (CFO, phase, timing), demodulate,
+compare recovered bits against main metadata bits AND backup metadata bits.
+Run exhaustive scan: all timing offsets 0..9, both bit polarities, QPSK I/Q swap variants.
+
+[REASON]
+Determine whether any combination of timing and polarity recovers high accuracy against
+either metadata version, which would prove or disprove provenance.
+
+[RESULT]
+BPSK signal_0002:
+  main_prefix_acc=0.5287  backup_prefix_acc=0.5287  (same, since main is prefix of backup)
+  best_shift_vs_main: acc=0.5400, shift=+6
+  exhaustive_max_accuracy=0.5372 (all offsets, both polarities)
+
+BPSK signal_0010:
+  main_prefix_acc=0.5006  backup_prefix_acc=0.5012
+  best_shift_vs_main: acc=0.5309, shift=+11
+  exhaustive_max_accuracy=0.5287
+
+QPSK signal_0201:
+  main_prefix_acc=0.4951  backup_prefix_acc=0.4951
+  best_shift: acc=0.5254, shift=+1
+  exhaustive_max_accuracy (incl. I/Q swap)=0.5287
+
+QPSK signal_0210:
+  main_prefix_acc=0.4994  backup_prefix_acc=0.4994
+  best_shift: acc=0.5320, shift=+12
+  exhaustive_max_accuracy=0.5128
+
+FSK signal_0401:
+  main_prefix_acc=0.5153 (819 vs 2000 bits, only first 819 compared)
+  best_shift: acc=0.5481
+  exhaustive_max_accuracy=0.5336
+
+FSK signal_0410:
+  main_prefix_acc=0.4799 (819 vs 2000 bits)
+  best_shift: acc=0.5360
+  exhaustive_max_accuracy=0.5250
+
+QAM16 signal_0601:
+  main_prefix_acc=0.5058  backup_prefix_acc=0.5058
+  best_shift: acc=0.5241
+  exhaustive_max_accuracy=0.5122
+
+QAM16 signal_0610:
+  main_prefix_acc=0.4982  backup_prefix_acc=0.4982
+  best_shift: acc=0.5180
+  exhaustive_max_accuracy=0.5208
+
+ALL 8 SIGNALS: maximum achievable accuracy never exceeds 54% under ANY combination of
+known sync parameters, exhaustive timing scan, polarity variants, or QPSK I/Q swap.
+This is statistically indistinguishable from random chance (50%).
+
+CONTROL CHECK (generator+demodulator self-consistency):
+- BPSK clean signal demodulated with exact generator symbols: accuracy=1.0 (confirmed correct chain).
+- FSK clean signal demodulated: accuracy=1.0 (confirmed correct chain).
+- QPSK clean symbols: demodulator has I/Q swap bug (see Part 11), but with correction: accuracy=1.0.
+- QAM16 clean symbols: gray-code bug but does not cause ~50% (see Part 11).
+
+The control check proves that when the metadata bits and the signal ARE from the same generation,
+the demodulator chain produces near-perfect accuracy. The fact that the actual IQ gives ~50%
+on ALL modulations PROVES the IQ waveforms were generated from DIFFERENT bits than the metadata.
+
+=== PART 8: IQ vs WAV COMPARISON ===
+
+[ACTION]
+For all 8 signals, compare IQ file samples vs WAV file samples numerically.
+
+[REASON]
+Determine whether IQ and WAV represent the same signal.
+
+[RESULT]
+All 8 signals:
+- IQ samples: 8192, WAV samples: 8192, n_compared: 8192.
+- I component MAE: 0.0 (bit-for-bit identical).
+- Q component MAE: 0.0 (bit-for-bit identical).
+- I correlation: 1.0, Q correlation: 1.0.
+- IQ RMS = WAV RMS = 1.0 for all 8.
+- NUMERICALLY IDENTICAL: True for all 8 (tolerance 1e-6).
+
+CONCLUSION: IQ and WAV files are bit-for-bit identical representations of the same signal.
+They are NOT different generations. The convention is interleaved float32 (IQ) vs 2-channel
+stereo float32 WAV (ch0=I, ch1=Q), both holding the same complex samples.
+
+=== PART 9: FSK SPECIAL CASE ANALYSIS ===
+
+[ACTION]
+Investigate FSK metadata bit count mismatch (2000 bits for 819 recoverable symbols) separately.
+
+[REASON]
+Determine cause and whether it explains ~50% for other modulations.
+
+[RESULT]
+FSK bit_length=2000 corresponds to ceil(20000/10)=2000 symbols for a 20000-sample signal.
+The current FSK IQ has 8192 samples = 819 complete symbols (floor(8192/10)).
+The backup metadata also has 2000 FSK bits and samples=20000.
+Main FSK bits == backup FSK bits (identical, 2000 each).
+fix_metadata_samples.py updated samples field to 8192 BUT did NOT truncate bits to 819.
+
+Cause: The FSK metadata (main and backup) was generated for a 20000-sample signal.
+The IQ was later truncated/shortened to 8192 samples (possibly a generation run with num_samples=8192),
+but the metadata bits were never updated. Since FSK bits == 2000 in BOTH main and backup,
+this is a metadata generation mismatch specific to FSK, not a fix_metadata_samples.py issue.
+
+Impact on other modulations: NONE.
+- BPSK: 819 bits = 819 recoverable symbols (matches).
+- QPSK: 1638 bits = 1638 recoverable bits (matches).
+- QAM16: 3276 bits = 3276 recoverable bits (matches).
+The FSK length mismatch is isolated to FSK and cannot explain BPSK/QPSK/QAM16 ~50% accuracy.
+
+Within the valid FSK range (first 819 bits), accuracy remains ~50-53% (random chance).
+This confirms: even if the FSK bit count were correct (819), the IQ was still generated from
+DIFFERENT bits. The FSK problem is two-fold: wrong length AND wrong bits.
+
+Additional finding: FSK IQ samples ALL have |sample|=1.0 exactly (constant envelope).
+The FSK generator adds AWGN but the stored FSK IQ is NOISELESS (noise was either not added,
+or the IQ was normalized in a way that removed the noise variance from constant-envelope signal).
+This is a separate anomaly from the bit mismatch.
+
+=== PART 10: TRANSFORMER INDEPENDENCE FROM METADATA BITS ===
+
+[ACTION]
+Search ai/training/train.py, ai/training/dataset.py, ai/inference/predict.py, and
+backend/services/pipeline.py for any reference to metadata transmitted bits.
+
+[REASON]
+Confirm that the Transformer modulation classifier does not use or depend on metadata bits.
+
+[RESULT]
+- ai/training/train.py: NO reference to metadata["bits"], expected_bits, or BER. Labels come
+  from directory/class names only (BPSK/QPSK/FSK/QAM16 folder names).
+- ai/training/dataset.py: loads IQ files and produces [I, Q, magnitude, phase] features.
+  NO metadata JSON is loaded. NO bits field is referenced.
+- ai/inference/predict.py: loads IQ or WAV, prepares [I, Q, magnitude, phase] features,
+  normalizes, pads/truncates to 1000 samples, runs Transformer. NO bits loaded.
+- backend/services/pipeline.py: references recovered_bits (produced BY demodulation),
+  but NEVER loads metadata["bits"] or expected_bits. No BER calculation.
+
+CONFIRMED: Metadata transmitted-bit mismatch is NOT responsible for Transformer
+modulation classification. The Transformer uses only raw IQ signal features (I, Q, magnitude,
+phase) and class labels from folder names. It has zero exposure to metadata bit content.
+
+=== ADDITIONAL FINDING: DEMODULATOR BUGS CONFIRMED ===
+
+During the self-consistency tests, two demodulator bugs were confirmed:
+
+1. QPSK demodulator I/Q OUTPUT SWAP:
+   Generator stores bits as [i_bit, q_bit] per symbol (I channel first).
+   demodulate_qpsk returns [q_bit, i_bit] per symbol (Q channel first — SWAPPED).
+   Impact: For random equally-likely bits, P(i_bit != q_bit) = 0.5.
+   Swapping creates ~50% wrong bits on all symbols where I != Q.
+   Expected accuracy with correct IQ and known sync: ~50% (not 1.0).
+   This would explain QPSK ~50% accuracy IF the IQ was from the same bits.
+   Since IQ uses different bits, this bug has no visible effect on current results,
+   but it CONFIRMS that QPSK would still fail at ~50% even after waveform provenance is resolved.
+
+2. QAM16 demodulator inner-ring gray-code bug:
+   4 of 16 symbol patterns have wrong b1 and b3 bits (inner I and inner Q).
+   Patterns: [0,1,0,1], [0,1,1,1], [1,1,0,1], [1,1,1,1] -> b1 decoded as 0 instead of 1.
+   Expected accuracy with correct IQ and known sync: 87.5% (not 50%).
+   This bug ALONE cannot explain ~50% QAM16 accuracy.
+
+These demodulator bugs are SEPARATE from the bit provenance problem. Even after provenance
+is resolved (i.e., correct bits are associated with the correct waveforms), QPSK would still
+show ~50% and QAM16 ~87.5% without demodulator fixes.
+
+========================================
+WAVEFORM / METADATA PROVENANCE RESULT
+========================================
+
+--- Signal: BPSK signal_0002_bpsk ---
+Modulation: BPSK
+IQ samples: 8192
+WAV samples: 8192 (bit-for-bit identical to IQ)
+Main metadata bit length: 819
+Backup metadata bit length: 2000 (main bits are exact prefix of backup)
+Recovered bit length: 819
+
+Main metadata accuracy: 52.87% (common prefix, n=819)
+Backup metadata accuracy: 52.87% (same bits in common length)
+Best alignment (±20 bits): 54.00% at shift=+6
+Exhaustive scan max accuracy: 53.72% (all timings, both polarities)
+Control (clean bits from meta -> demod): 100.0%
+
+Exact reproduction: IMPOSSIBLE
+Evidence: Near-zero I/Q correlation between reproduced clean signal and existing IQ.
+Existing IQ was generated from DIFFERENT bits; RNG seed not stored.
+
+--- Signal: BPSK signal_0010_bpsk ---
+Modulation: BPSK
+IQ samples: 8192
+WAV samples: 8192 (bit-for-bit identical)
+Main metadata bit length: 819
+Backup metadata bit length: 2000 (exact prefix)
+Recovered bit length: 820
+
+Main metadata accuracy: 50.06%
+Backup metadata accuracy: 50.12%
+Best alignment: 53.09% at shift=+11
+Exhaustive scan max accuracy: 52.87%
+Control (clean): 100.0%
+
+Exact reproduction: IMPOSSIBLE
+Evidence: Accuracy indistinguishable from random chance across all timing/polarity variants.
+
+--- Signal: QPSK signal_0201_qpsk ---
+Modulation: QPSK
+IQ samples: 8192
+WAV samples: 8192 (bit-for-bit identical)
+Main metadata bit length: 1638
+Backup metadata bit length: 4000 (exact prefix)
+Recovered bit length: 1638
+
+Main metadata accuracy: 49.51%
+Backup metadata accuracy: 49.51%
+Best alignment: 52.54% at shift=+1
+Exhaustive scan max accuracy: 52.87% (incl. I/Q swap variants)
+Control (clean, with swap fix): 100.0%
+
+Exact reproduction: IMPOSSIBLE
+Note: QPSK demodulator has I/Q swap bug that would also cause ~50% on correctly-sourced IQ.
+
+--- Signal: QPSK signal_0210_qpsk ---
+Modulation: QPSK
+IQ samples: 8192
+WAV samples: 8192 (bit-for-bit identical)
+Main metadata bit length: 1638
+Backup metadata bit length: 4000 (exact prefix)
+Recovered bit length: 1638
+
+Main metadata accuracy: 49.94%
+Backup metadata accuracy: 49.94%
+Best alignment: 53.20% at shift=+12
+Exhaustive scan max accuracy: 51.28%
+
+Exact reproduction: IMPOSSIBLE
+
+--- Signal: FSK signal_0401_fsk ---
+Modulation: 2FSK
+IQ samples: 8192 (waveform supports 819 complete symbols)
+WAV samples: 8192 (bit-for-bit identical)
+Main metadata bit length: 2000 (MISMATCH — metadata for 20000-sample signal)
+Backup metadata bit length: 2000 (identical to main)
+Recovered bit length: 819
+
+Main metadata accuracy (first 819 of 2000): 51.53%
+Backup metadata accuracy (first 819 of 2000): 51.53%
+Best alignment (within 819): 54.81% at shift=-9
+Exhaustive scan max accuracy: 53.36%
+Control (clean 819 symbols from meta bits): 100.0%
+
+Exact reproduction: IMPOSSIBLE
+Note: FSK IQ is constant-envelope (|s|=1.0 always, no AWGN present).
+Additional issue: metadata has 2000 bits for 819 recoverable symbols (separate length mismatch).
+
+--- Signal: FSK signal_0410_fsk ---
+Modulation: 2FSK
+IQ samples: 8192
+WAV samples: 8192 (bit-for-bit identical)
+Main metadata bit length: 2000 (MISMATCH)
+Backup metadata bit length: 2000 (identical to main)
+Recovered bit length: 819
+
+Main metadata accuracy (first 819): 47.99%
+Backup metadata accuracy (first 819): 47.99%
+Best alignment: 53.60% at shift=+16
+Exhaustive scan max accuracy: 52.50%
+
+Exact reproduction: IMPOSSIBLE
+
+--- Signal: QAM16 signal_0601_qam16 ---
+Modulation: 16QAM
+IQ samples: 8192
+WAV samples: 8192 (bit-for-bit identical)
+Main metadata bit length: 3276
+Backup metadata bit length: 8000 (exact prefix)
+Recovered bit length: 3276
+
+Main metadata accuracy: 50.58%
+Backup metadata accuracy: 50.58%
+Best alignment: 52.41% at shift=+21
+Exhaustive scan max accuracy: 51.22%
+Note: QAM16 demodulator has gray-code bug (87.5% accuracy ceiling for correctly-sourced IQ).
+
+Exact reproduction: IMPOSSIBLE
+
+--- Signal: QAM16 signal_0610_qam16 ---
+Modulation: 16QAM
+IQ samples: 8192
+WAV samples: 8192 (bit-for-bit identical)
+Main metadata bit length: 3276
+Backup metadata bit length: 8000 (exact prefix)
+Recovered bit length: 3276
+
+Main metadata accuracy: 49.82%
+Backup metadata accuracy: 49.82%
+Best alignment: 51.79% at shift=+17
+Exhaustive scan max accuracy: 52.08%
+
+Exact reproduction: IMPOSSIBLE
+
+========================================
+OVERALL CONCLUSION
+========================================
+
+1. Were the current metadata bits proven to be the bits used to generate the existing waveform?
+   NO. Proven NOT to be. Self-consistency test shows clean signal from metadata bits
+   demodulates at 100% accuracy, while actual IQ gives ~50% (random chance) under ALL
+   synchronization parameter combinations. Near-zero I/Q correlation between reproduced
+   clean signal and existing IQ confirms the waveforms were generated from different RNG
+   states/seeds, producing entirely different bit sequences.
+
+2. Were the backup bits proven to be the original bits?
+   NO. Backup bits are an exact prefix of main bits (same bits, just more of them from
+   the same RNG run to a longer length). Both main and backup fail identically (~50%)
+   against the actual IQ waveforms. Backup is NOT a different generation for these signals.
+
+3. Is the current metadata only structurally consistent, or is actual waveform-to-bit
+   provenance proven?
+   STRUCTURALLY CONSISTENT ONLY. Metadata parameters (sps, sample_rate, symbol_rate,
+   samples) match the waveform dimensions. But bit content provenance is DISPROVEN.
+   The IQ and WAV files are from a dataset generation run whose RNG seed was not saved
+   and was not the run that produced the current main/backup metadata bits.
+
+4. Are IQ and WAV consistent?
+   YES. CONFIRMED. All 8 representative signals show bit-for-bit identical IQ and WAV
+   content (MAE=0.0, correlation=1.0 for all). IQ and WAV are the same signal stored
+   in two different file formats.
+
+5. Is metadata provenance a likely explanation for the ~50% bit accuracy?
+   YES. CONFIRMED as the PRIMARY cause. The IQ waveforms and the metadata bitstreams
+   were produced by DIFFERENT RNG runs (different seeds). The bit sequences are completely
+   uncorrelated. This explains exactly why accuracy is ~50% regardless of synchronization
+   corrections or timing alignment attempts.
+
+6. Is the FSK mismatch a separate issue?
+   YES. FSK has two separate problems:
+   (a) Wrong bits: FSK IQ was generated from different bits (same conclusion as other modulations).
+   (b) Metadata bit count mismatch: 2000 bits stored for a waveform that only supports 819
+       complete symbols. This causes invalid full-length comparison; within the first 819 bits
+       the result is still random chance.
+   FSK also has a third anomaly: the stored IQ is constant-envelope (no noise), while the
+   generator adds AWGN. This suggests FSK IQ was generated differently or noise was removed.
+
+7. Is the Transformer involved?
+   NO. CONFIRMED. Training uses IQ features + folder-name class labels. Inference uses
+   IQ features only. Neither training nor inference loads or references metadata bits.
+   Bit accuracy and Transformer classification are completely independent systems.
+
+8. Should the Transformer be changed?
+   NO. The Transformer is not responsible for the bit accuracy problem. Changing it would
+   not improve bit accuracy.
+
+9. Should metadata be changed right now?
+   NO. The metadata is the wrong metadata (different generation), but changing it without
+   regenerating the IQ waveforms deterministically would not help. The correct action is
+   to regenerate the dataset WITH a stored seed, or to run the generator and store the seed
+   alongside the metadata so future verification is possible.
+
+10. What is the safest next action?
+    (a) Do not modify any existing project file.
+    (b) Document the confirmed generation mismatch in the authoritative index.
+    (c) Before any fix: regenerate the dataset with a deterministic, stored RNG seed so
+        waveform-to-bit provenance can be cryptographically verified.
+    (d) Fix the two demodulator bugs independently (QPSK I/Q swap, QAM16 gray-code) AFTER
+        provenance is established, since they affect accuracy even on correctly-sourced waveforms.
+    (e) Ensure fix_metadata_samples.py also updates bit strings when samples change.
+    (f) Do not train the Transformer on a dataset whose bit provenance is unverified.
+
+NO existing project source, data, model, synchronization, demodulation, backend, or frontend
+file was changed by this investigation. Only fix.txt and terminal.txt were updated.

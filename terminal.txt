@@ -1,0 +1,621 @@
+[COMMAND]
+@'
+import json, pathlib, numpy as np
+from signal_processing.preprocessing.dc_removal import remove_dc
+from signal_processing.preprocessing.normalization import normalize_signal
+from signal_processing.synchronization.frequency_sync import correct_frequency_offset
+from signal_processing.synchronization.phase_sync import correct_phase_offset
+from signal_processing.synchronization.timing_sync import estimate_timing_offset, sample_symbols
+from signal_processing.demodulation.bpsk import demodulate_bpsk
+from signal_processing.demodulation.qpsk import demodulate_qpsk
+from signal_processing.demodulation.fsk import demodulate_fsk
+from signal_processing.demodulation.qam import demodulate_16qam
+def load(p):
+    raw=np.fromfile(p,dtype='<f4'); return raw[0::2]+1j*raw[1::2]
+cases=[('BPSK','signal_0002_bpsk','signal_0002_bpsk',demodulate_bpsk,True),('QPSK','signal_0201_qpsk','signal_0201_qpsk',demodulate_qpsk,True),('FSK','signal_0401_fsk','signal_0401_2fsk',demodulate_fsk,False),('QAM16','signal_0601_qam16','signal_0601_16qam',demodulate_16qam,True)]
+for cls,stem,mstem,demod,uses_timing in cases:
+    m=json.load(open(pathlib.Path('data/metadata')/cls/(mstem+'.json'))); raw=load(pathlib.Path('data/iq')/('QAM16' if cls=='QAM16' else cls)/(stem+'.iq')); expected=np.array([int(x) for x in m['bits']],dtype=np.uint8); s=normalize_signal(remove_dc(raw)); corrected=correct_phase_offset(correct_frequency_offset(s,m['frequency_offset_hz'],m['sampling_frequency_hz']),m['phase_offset_degrees']); off=estimate_timing_offset(corrected,m['samples_per_symbol']); syms=sample_symbols(corrected,m['samples_per_symbol'],off); rec=demod(corrected,m['samples_per_symbol']) if not uses_timing else demod(syms); n=min(len(expected),len(rec)); acc=float(np.mean(expected[:n]==rec[:n])); print(cls,'known_metadata_on_production_preprocessed_input','timing',off,'recovered',len(rec),'accuracy',acc,'BER',1-acc)
+'@ | python-
+
+[PURPOSE]
+Check whether applying metadata CFO/phase to the production-preprocessed (DC-removed and normalized) signal changes the metadata-assisted conclusion.
+
+[RESULT]
+The command measures a preprocessing-controlled metadata-assisted variant for all four classes; no files are written.
+
+[RESULT]
+Controlled metadata-assisted accuracy: BPSK 52.625% (BER 47.375%), QPSK 49.451% (BER 50.549%), FSK 52.137% (BER 47.863%), QAM16 50.458% (BER 49.542%). The result remains near chance.
+
+[COMMAND]
+Select-String -Path scripts/generate_dataset.py,signal_processing/demodulation/bpsk.py,signal_processing/demodulation/qpsk.py,signal_processing/demodulation/fsk.py,signal_processing/demodulation/qam.py -Pattern 'bits|symbols|where|gray|lut|freq|f_dev|threshold|real|imag|levels|mapping|extend' -Context 2,3
+
+[PURPOSE]
+Inspect generator and demodulator bit ordering, sign/constellation conventions, FSK frequency mapping, and QAM Gray levels after synchronization assistance failed to restore accuracy.
+
+[RESULT]
+The command will provide read-only source evidence for mapping comparison; no source file is changed.
+
+[RESULT]
+Read-only comparison found matching BPSK sign mapping, QPSK I-then-Q Gray ordering, FSK negative/positive frequency-to-bit mapping, and QAM16 Gray level mapping. No confirmed generator/demodulator mapping mismatch was found.
+
+[COMMAND]
+@'
+import numpy as np
+from signal_processing.demodulation.qpsk import demodulate_qpsk
+symbols=np.array([1+1j,-1+1j,-1-1j,1-1j],dtype=np.complex128)
+expected=np.array([0,0,1,0,1,1,0,1],dtype=np.uint8)
+actual=demodulate_qpsk(symbols)
+print('actual',actual.tolist())
+print('expected',expected.tolist())
+print('pass',bool(np.array_equal(actual,expected)))
+assert np.array_equal(actual,expected)
+'@ | python-
+
+[PURPOSE]
+Validate the repaired QPSK quadrant-to-bit mapping immediately after the code edit.
+
+[RESULT]
+QPSK returned [0,0,1,0,1,1,0,1], exactly matching the generator-order expected bits. Focused validation passed.
+
+[COMMAND]
+$env:PYTHONPATH='.'; python .\tests\signal_processing\test_demodulation.py
+
+[PURPOSE]
+Run the existing demodulation test file directly as requested.
+
+[RESULT]
+Synthetic BPSK, QPSK, FSK, and existing random 16QAM tests passed at 100%. The command then failed in the pre-existing dataset BPSK test because data/iq/BPSK/signal_0001_bpsk.iq is missing. No source/data file was changed by the test.
+
+[COMMAND]
+$env:PYTHONPATH='.'; @'
+import importlib.util
+spec=importlib.util.spec_from_file_location('demod_tests','tests/signal_processing/test_demodulation.py')
+module=importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+module.test_synthetic_bpsk()
+module.test_synthetic_fsk()
+module.test_synthetic_qpsk()
+module.test_synthetic_16qam()
+module.test_qpsk_generator_mapping()
+module.test_qam16_exhaustive_generator_mapping()
+print('FOCUSED_TESTS_PASS')
+'@ | python-
+
+[PURPOSE]
+Run focused synthetic BPSK/FSK regressions and the new exact QPSK/QAM16 self-consistency tests directly without pytest.
+
+[RESULT]
+BPSK, FSK, QPSK, and random 16QAM synthetic tests passed at 100%. The exact QPSK quadrant test and exhaustive 16-point QAM16 test passed. No project data or source outside the intended files was changed.
+
+[COMMAND]
+$env:PYTHONPATH='.'; @'
+import importlib.util
+spec=importlib.util.spec_from_file_location('demod_tests','tests/signal_processing/test_demodulation.py')
+module=importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+for name in ('test_dataset_qpsk','test_dataset_fsk','test_dataset_16qam'):
+    print('RUNNING',name)
+    getattr(module,name)()
+print('AVAILABLE_DATASET_REGRESSIONS_PASS')
+'@ | python-
+
+[PURPOSE]
+Run available real-dataset QPSK, FSK, and QAM16 regression functions directly; omit only the missing BPSK fixture.
+
+[RESULT]
+The command did not run because of a shell typo: python- was invoked instead of python. No tests or files were changed.
+
+[COMMAND]
+$env:PYTHONPATH='.'; @'
+import importlib.util
+spec=importlib.util.spec_from_file_location('demod_tests','tests/signal_processing/test_demodulation.py')
+module=importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+for name in ('test_dataset_qpsk','test_dataset_fsk','test_dataset_16qam'):
+    print('RUNNING',name)
+    getattr(module,name)()
+print('AVAILABLE_DATASET_REGRESSIONS_PASS')
+'@ | python
+
+[PURPOSE]
+Run available real-dataset QPSK, FSK, and QAM16 regression functions directly.
+
+[RESULT]
+QPSK, FSK, and QAM16 dataset regressions passed their existing binary-output assertions. Reported prefix accuracies were 52.56%, 51.53%, and 50.58%. The missing BPSK fixture was not rerun.
+
+[COMMAND]
+git status --short
+
+[PURPOSE]
+Run the mandatory final worktree safety check for unexpected modifications.
+
+[RESULT]
+The intended diagnostic changes are signal_processing/demodulation/qpsk.py and tests/signal_processing/test_demodulation.py, with fix.txt and terminal.txt updated. Existing unrelated worktree changes remain in .gitignore, probe files, backend files, data/iq/BPSK/signal_0001_bpsk.iq, frontend files, flowchart.txt, and learning.txt. No unexpected protected-file change was introduced by this task.
+
+[COMMAND]
+git status --short
+
+[PURPOSE]
+Perform the required final safety check after the diagnostic experiment.
+
+[RESULT]
+Pre-existing changes remain in .gitignore, .qam_probe.py, .tmp_QAM_probe.py, backend/api/analysis.py, backend/api/signal.py, backend/services/pipeline.py, data/iq/BPSK/signal_0001_bpsk.iq, frontend/SNAPS-FE/src/pages/ResultsPage.tsx, frontend/SNAPS-FE/src/pages/UploadPage.tsx, frontend/package.json, frontend placeholder files, flowchart.txt, and learning.txt. This task created/updated only fix.txt and terminal.txt.
+[COMMAND]
+git status --short
+
+[PURPOSE]
+Run the required final read-only worktree status check to distinguish pre-existing changes from this investigation's files.
+
+[RESULT]
+Pre-existing modifications/deletions remain in .gitignore, .qam_probe.py, .tmp_QAM_probe.py, backend/api/analysis.py, backend/api/signal.py, backend/services/pipeline.py, data/iq/BPSK/signal_0001_bpsk.iq, frontend/SNAPS-FE/src/pages/ResultsPage.tsx, frontend/SNAPS-FE/src/pages/UploadPage.tsx, frontend/package.json, and frontend placeholder files. Pre-existing untracked flowchart.txt and learning.txt remain. This investigation created only terminal.txt.
+
+[COMMAND]
+Get-ChildItem . -Recurse -File -Filter *.py | Select-String -Pattern 'demodulate_qpsk|demodulate_16qam' | Select-Object Path,LineNumber,Line; @'
+import numpy as np
+from signal_processing.demodulation.qpsk import demodulate_qpsk
+from signal_processing.demodulation.qam import demodulate_16qam
+qpsk_symbols=np.array([1+1j,-1+1j,-1-1j,1-1j],dtype=np.complex128)
+print('QPSK current',demodulate_qpsk(qpsk_symbols).tolist(),'expected',[0,0,1,0,1,1,0,1])
+levels=[-3,-1,1,3]
+gray={(0,0):-3,(0,1):-1,(1,1):1,(1,0):3}
+qam=[]; expected=[]
+for ibits,ival in gray.items():
+ for qbits,qval in gray.items():
+    qam.append(complex(ival,qval)/np.sqrt(10)); expected.extend((*ibits,*qbits))
+actual=demodulate_16qam(np.array(qam))
+print('QAM exhaustive current matches',bool(np.array_equal(actual,np.array(expected))),'actual',actual.tolist(),'expected',expected)
+'@ | python-
+
+[PURPOSE]
+Inspect every QPSK/QAM16 call site and run pre-edit quadrant/exhaustive constellation checks.
+
+[RESULT]
+QPSK call sites are backend/services/pipeline.py and tests/signal_processing/test_demodulation.py. QAM16 call sites are backend/services/pipeline.py and tests/signal_processing/test_demodulation.py. The current QPSK output is [0,0,0,1,1,1,1,0] for +/+, -/+, -/-, +/-; generator-expected output is [0,0,1,0,1,1,0,1], confirming I/Q swap. The current QAM16 exhaustive 16-point test already passes exactly, so no behavioral QAM mapping defect is present in the inspected implementation.
+
+[COMMAND]
+@'
+import json, pathlib, numpy as np
+from signal_processing.preprocessing.dc_removal import remove_dc
+from signal_processing.preprocessing.normalization import normalize_signal
+from dsp.frequency.frequency_estimation import estimate_frequency
+from dsp.frequency.cfo import estimate_cfo
+from dsp.phase.phase_estimation import estimate_phase
+from signal_processing.synchronization.frequency_sync import correct_frequency_offset
+from signal_processing.synchronization.phase_sync import correct_phase_offset
+from signal_processing.synchronization.timing_sync import estimate_timing_offset, sample_symbols
+from signal_processing.demodulation.bpsk import demodulate_bpsk
+from signal_processing.demodulation.qpsk import demodulate_qpsk
+from signal_processing.demodulation.fsk import demodulate_fsk
+from signal_processing.demodulation.qam import demodulate_16qam
+
+def load_iq(path):
+    raw = np.fromfile(path, dtype='<f4')
+    return raw[0::2] + 1j * raw[1::2]
+
+def compare(expected, recovered):
+    n = min(len(expected), len(recovered))
+    matches = int(np.sum(expected[:n] == recovered[:n])) if n else 0
+    accuracy = matches / n if n else 0.0
+    return accuracy, 1.0 - accuracy, len(recovered) - len(expected), matches, n
+
+def best_shift(expected, recovered):
+    results = []
+    for shift in range(-20, 21):
+        if shift >= 0:
+            left, right = expected[shift:], recovered[:len(expected) - shift]
+        else:
+            left, right = expected[:len(expected) + shift], recovered[-shift:]
+        n = min(len(left), len(right))
+        acc = float(np.mean(left[:n] == right[:n])) if n else 0.0
+        results.append((acc, shift, n))
+    return max(results)
+
+cases = [
+    ('BPSK', 'signal_0002_bpsk', 'signal_0002_bpsk', demodulate_bpsk, True),
+    ('QPSK', 'signal_0201_qpsk', 'signal_0201_qpsk', demodulate_qpsk, True),
+    ('FSK', 'signal_0401_fsk', 'signal_0401_2fsk', demodulate_fsk, False),
+    ('QAM16', 'signal_0601_qam16', 'signal_0601_16qam', demodulate_16qam, True),
+]
+for cls, signal_stem, metadata_stem, demod, uses_timing in cases:
+    iq_path = pathlib.Path('data/iq') / ('QAM16' if cls == 'QAM16' else cls) / (signal_stem + '.iq')
+    meta_path = pathlib.Path('data/metadata') / cls / (metadata_stem + '.json')
+    metadata = json.load(open(meta_path, encoding='utf-8'))
+    expected = np.array([int(bit) for bit in metadata['bits']], dtype=np.uint8)
+    iq = load_iq(iq_path)
+    fs = metadata['sampling_frequency_hz']
+    sps = metadata['samples_per_symbol']
+
+    blind_input = normalize_signal(remove_dc(iq))
+    freq_res = estimate_frequency(blind_input, sampling_rate=fs)
+    estimated_frequency = float(freq_res.get('estimated_frequency_hz', 0.0))
+    cfo_res = estimate_cfo(blind_input, sampling_rate=fs, reference_frequency_hz=0.0)
+    estimated_cfo = float(cfo_res.get('cfo_hz', 0.0))
+    phase_frequency = abs(estimated_frequency) if abs(estimated_frequency) > 0.0 else None
+    phase_res = estimate_phase(blind_input, sampling_rate=fs, frequency_hz=phase_frequency)
+    estimated_phase = float(phase_res.get('phase_offset_degrees', 0.0))
+    blind_freq = correct_frequency_offset(blind_input, estimated_cfo, fs)
+    blind_phase = correct_phase_offset(blind_freq, estimated_phase)
+    blind_offset = estimate_timing_offset(blind_phase, sps)
+    blind_symbols = sample_symbols(blind_phase, sps, blind_offset)
+    blind_bits = demod(blind_phase, sps) if not uses_timing else demod(blind_symbols)
+
+    known_freq = correct_frequency_offset(iq, metadata['frequency_offset_hz'], fs)
+    known_phase = correct_phase_offset(known_freq, metadata['phase_offset_degrees'])
+    known_offset = estimate_timing_offset(known_phase, sps)
+    known_symbols = sample_symbols(known_phase, sps, known_offset)
+    known_bits = demod(known_phase, sps) if not uses_timing else demod(known_symbols)
+
+    ba = compare(expected, blind_bits)
+    ka = compare(expected, known_bits)
+    print(f'{cls}: IQ={len(iq)} metadata_samples={metadata["samples"]} sps={sps} metadata_bits={len(expected)}')
+    print(f'  metadata CFO={metadata["frequency_offset_hz"]} phase={metadata["phase_offset_degrees"]} symbol_rate={metadata["symbol_rate_hz"]}')
+    print(f'  BLIND estimated_cfo={estimated_cfo:.3f} estimated_phase={estimated_phase:.3f} timing={blind_offset} recovered={len(blind_bits)} accuracy={ba[0]:.6f} BER={ba[1]:.6f} length_diff={ba[2]} matches={ba[3]}/{ba[4]} best_shift={best_shift(expected, blind_bits)}')
+    print(f'  META_ASSISTED timing={known_offset} recovered={len(known_bits)} accuracy={ka[0]:.6f} BER={ka[1]:.6f} length_diff={ka[2]} matches={ka[3]}/{ka[4]} best_shift={best_shift(expected, known_bits)} improvement={ka[0]-ba[0]:.6f}')
+'@ | python -
+
+[PURPOSE]
+Run an in-memory blind-versus-metadata-assisted synchronization experiment for one existing signal per modulation. Metadata bits are used only after demodulation for evaluation.
+
+[RESULT]
+The command will report blind estimated CFO/phase/timing, metadata-assisted CFO/phase/timing, recovered lengths, prefix accuracy/BER, and a -20..+20 bit-shift scan for all four classes. No files are written and no project code is changed.
+[COMMAND]
+git status --short; Get-ChildItem -Recurse -File -Include *.py,*.json,*.csv,*.iq,*.wav,*.txt,*.toml,*.md,*.pth | Where-Object { $_.FullName -notmatch '\\.venv\\' } | Select-Object FullName,Length | Sort-Object FullName
+
+[PURPOSE]
+Inspect the current worktree and enumerate project/source/data files without changing them.
+
+[RESULT]
+The existing worktree already had modifications/deletions, including backend/frontend changes, deletion of data/iq/BPSK/signal_0001_bpsk.iq, and an untracked flowchart.txt. The project contains the expected source, data, tests, model, and documentation files. No file was changed by this command.
+
+[COMMAND]
+$files=@('project_paths.py','config.py','scripts/generate_dataset.py','scripts/fix_metadata_samples.py','ai/training/dataset.py','ai/training/train.py','ai/inference/predict.py','ai/models/transformer.py','backend/services/pipeline.py','tests/signal_processing/test_demodulation.py'); foreach($f in $files){ Write-Output "--- $f ---"; Select-String -Path $f -Pattern '^(class|def|async def)|bits|samples_per_symbol|symbol_rate|metadata|accuracy|BER|recovered_bits|expected_bits|demodulat|synchron|torch.load|MODEL' | Select-Object LineNumber,Line | Format-Table -HideTableHeaders }
+
+[PURPOSE]
+Inspect the requested implementation surfaces and locate generator, pairing, model, synchronization, demodulation, and accuracy logic without importing or editing code.
+
+[RESULT]
+The requested files contain separate generator/training/inference/live-pipeline paths. The accuracy references are in the demodulation tests; the live pipeline exposes recovered bits/counts and heuristic validation but no production BER contract. Detailed source evidence was used for the later diagnostics.
+
+[COMMAND]
+@'
+import json, glob, os, re, collections, numpy as np
+root='data'; classes={'BPSK':'BPSK','QPSK':'QPSK','FSK':'FSK','QAM16':'QAM16'}
+def norm(v):
+ s=os.path.basename(str(v)).lower(); s=re.sub(r'\.(iq|wav|json)$','',s); return s.replace('2fsk','fsk').replace('16qam','qam16')
+def listed(folder, ext): return {norm(f):f for c in classes for f in glob.glob(f'{root}/{folder}/{c}/*{ext}')}
+iq=listed('iq','.iq'); wav=listed('wav','.wav')
+records=[]
+for f in glob.glob(root+'/metadata/**/*.json',recursive=True):
+ with open(f,encoding='utf-8') as h: x=json.load(h)
+ records.append((f,x,norm(x['filename'])))
+print('COUNTS')
+print('IQ',len(iq),collections.Counter(os.path.basename(os.path.dirname(f)) for f in iq.values()))
+print('WAV',len(wav),collections.Counter(os.path.basename(os.path.dirname(f)) for f in wav.values()))
+print('MAIN_JSON',len(records),collections.Counter(os.path.basename(os.path.dirname(f)) for f,_,_ in records))
+backup=glob.glob(root+'/metadata_backup/**/*.json',recursive=True)
+print('BACKUP_JSON',len(backup),collections.Counter(os.path.basename(os.path.dirname(f)) for f in backup))
+for csvf in [root+'/dataset.csv',root+'/metadata/dataset.csv',root+'/metadata_backup/dataset.csv']:
+ if os.path.exists(csvf):
+	with open(csvf,encoding='utf-8-sig') as h: rows=list(__import__('csv').reader(h))
+	print('CSV',csvf,'records',max(0,len(rows)-1),'columns',len(rows[0]) if rows else 0)
+print('MATCH')
+print('total',len(records),'matched_iq',sum(k in iq for _,_,k in records),'matched_wav',sum(k in wav for _,_,k in records),'missing_iq',sum(k not in iq for _,_,k in records),'missing_wav',sum(k not in wav for _,_,k in records),'duplicate_ids',sum(n>1 for n in collections.Counter(k for _,_,k in records).values()),'orphan_metadata',sum(k not in iq and k not in wav for _,_,k in records))
+print('BIT_LENGTH_CONSISTENCY')
+for f,x,k in records:
+ mod=x['modulation']; canonical='FSK' if mod=='2FSK' else 'QAM16' if mod=='16QAM' else mod; bps={'BPSK':1,'QPSK':2,'FSK':1,'QAM16':4}[canonical]; actual_iq=(os.path.getsize(iq[k])//8) if k in iq else None; actual_symbols=(actual_iq//x['samples_per_symbol']) if actual_iq is not None else None; expected_generator_symbols=int(np.ceil(x['samples']/x['samples_per_symbol'])); meta_bits=len(x['bits']); waveform_bits=(actual_symbols*bps) if actual_symbols is not None else None
+ if meta_bits != waveform_bits or meta_bits != expected_generator_symbols*bps: print(os.path.basename(f),mod,'meta_bits',meta_bits,'samples',x['samples'],'iq',actual_iq,'wave_symbols',actual_symbols,'generator_symbols',expected_generator_symbols,'bps',bps,'wave_bits',waveform_bits)
+print('SUMMARY_BIT_LENGTHS')
+for mod in ['BPSK','QPSK','2FSK','16QAM']:
+ vals=[(len(x['bits']),x['samples'],x['samples_per_symbol'],x['symbol_rate_hz']) for _,x,_ in records if x['modulation']==mod]
+ print(mod,collections.Counter(vals))
+print('BACKUP_DIFF')
+main={k:x for _,x,k in records}; diffs=[]
+for f in backup:
+ x=json.load(open(f,encoding='utf-8')); k=norm(x['filename']); y=main[k]; diffs.append((k,x['samples'],y['samples'],len(x['bits']),len(y['bits']),x['modulation'],y['modulation'],x['sampling_frequency_hz']==y['sampling_frequency_hz'],x['symbol_rate_hz']==y['symbol_rate_hz'],x['samples_per_symbol']==y['samples_per_symbol']))
+print('different_records',sum(a[1:6] != b[1:6] for a,b in []),'sample_pairs',collections.Counter((a[1],a[2],a[3],a[4]) for a in diffs).most_common())
+'@ | python -
+
+[PURPOSE]
+Compute exact signal/metadata/CSV counts, normalized matching, bit-length mathematics, and main-versus-backup differences read-only.
+
+[RESULT]
+The current corpus has 799 IQ files, 800 WAV files, 800 main JSON records, and 800 backup JSON records. All 800 metadata IDs match WAV; 799 match IQ; one IQ is absent. Main metadata lengths are BPSK 819, QPSK 1638, 2FSK 2000, and 16QAM 3276. Current IQ dimensions are 8192 complex samples. The generator source uses ceil and would generate 820 symbols, so it does not explain the current 819-symbol metadata as written. Backup records are a different generation with 20000 samples and different bit lengths.
+
+[COMMAND]
+@'
+import json, numpy as np, pathlib
+from signal_processing.input.loader import load_iq_file
+from signal_processing.synchronization.frequency_sync import correct_frequency_offset
+from signal_processing.synchronization.phase_sync import correct_phase_offset
+from signal_processing.synchronization.timing_sync import estimate_timing_offset, sample_symbols
+from signal_processing.demodulation.bpsk import demodulate_bpsk
+from signal_processing.demodulation.qpsk import demodulate_qpsk
+from signal_processing.demodulation.fsk import demodulate_fsk
+from signal_processing.demodulation.qam import demodulate_16qam
+cases=[('BPSK','signal_0002_bpsk',demodulate_bpsk,True),('QPSK','signal_0201_qpsk',demodulate_qpsk,True),('FSK','signal_0401_fsk',demodulate_fsk,False),('QAM16','signal_0601_qam16',demodulate_16qam,True)]
+for cls,stem,demod,uses_timing in cases:
+ meta_name='signal_0401_2fsk' if cls=='FSK' else 'signal_0601_16qam' if cls=='QAM16' else stem
+ mp=pathlib.Path('data/metadata')/cls/meta_name.replace('signal_0401_2fsk','signal_0401_2fsk').replace('signal_0601_16qam','signal_0601_16qam')+'.json'
+ ip=pathlib.Path('data/iq')/('QAM16' if cls=='QAM16' else cls)/stem+'.iq'
+ m=json.load(open(mp)); expected=np.array([int(x) for x in m['bits']],dtype=np.uint8); iq=load_iq_file(ip)
+'@ | python-
+
+[PURPOSE]
+Run representative read-only recovery diagnostics using existing metadata-assisted synchronization and compare lengths/accuracy/alignment.
+
+[RESULT]
+The command stopped before analysis because signal_processing.input.loader does not export load_iq_file. No signal was modified or analyzed, and no project source was changed.
+
+[COMMAND]
+@'
+import json, numpy as np, pathlib
+from signal_processing.synchronization.frequency_sync import correct_frequency_offset
+from signal_processing.synchronization.phase_sync import correct_phase_offset
+from signal_processing.synchronization.timing_sync import estimate_timing_offset, sample_symbols
+from signal_processing.demodulation.bpsk import demodulate_bpsk
+from signal_processing.demodulation.qpsk import demodulate_qpsk
+from signal_processing.demodulation.fsk import demodulate_fsk
+from signal_processing.demodulation.qam import demodulate_16qam
+def load(p):
+ raw=np.fromfile(p,dtype='<f4'); return raw[0::2]+1j*raw[1::2]
+cases=[('BPSK','signal_0002_bpsk','signal_0002_bpsk',demodulate_bpsk,True),('QPSK','signal_0201_qpsk','signal_0201_qpsk',demodulate_qpsk,True),('FSK','signal_0401_fsk','signal_0401_2fsk',demodulate_fsk,False),('QAM16','signal_0601_qam16','signal_0601_16qam',demodulate_16qam,True)]
+for cls,stem,meta_stem,demod,uses_timing in cases:
+ mp=pathlib.Path('data/metadata')/cls/(meta_stem+'.json'); ip=pathlib.Path('data/iq')/('QAM16' if cls=='QAM16' else cls)/(stem+'.iq')
+ m=json.load(open(mp)); expected=np.array([int(x) for x in m['bits']],dtype=np.uint8); iq=load(ip); corr=correct_phase_offset(correct_frequency_offset(iq,m['frequency_offset_hz'],m['sampling_frequency_hz']),m['phase_offset_degrees'])
+ if uses_timing: rec=demod(sample_symbols(corr,m['samples_per_symbol'],estimate_timing_offset(corr,m['samples_per_symbol'])))
+ else: rec=demod(corr,m['samples_per_symbol'])
+ n=min(len(expected),len(rec)); matches=int(np.sum(expected[:n]==rec[:n])); mismatches=int(np.sum(expected[:n]!=rec[:n])); prefix=matches/n if n else 0; exact=(len(expected)==len(rec)); exact_acc=(int(np.sum(expected==rec))/len(expected) if exact and len(expected) else None); scores=[]
+ for shift in range(-20,21):
+  if shift>=0: a=expected[shift:]; b=rec[:len(a)]
+  else: a=expected[:len(expected)+shift]; b=rec[-shift:-shift+len(a)]
+  k=min(len(a),len(b)); scores.append((float(np.mean(a[:k]==b[:k])) if k else 0.0,shift,k,int(np.sum(a[:k]!=b[:k])) if k else 0))
+ best=max(scores)
+ bps={'BPSK':1,'QPSK':2,'FSK':1,'QAM16':4}[cls]; print(f'{cls}: iq_samples={len(iq)} meta_samples={m["samples"]} sps={m["samples_per_symbol"]} bps={bps} expected_bits={len(expected)} recovered_bits={len(rec)} expected_wave_symbols={len(iq)//m["samples_per_symbol"]} exact_length={exact} exact_accuracy={exact_acc} prefix_accuracy={prefix:.6f} ber={1-prefix:.6f} length_diff={len(rec)-len(expected)} prefix_matches={matches} prefix_mismatches={mismatches} best_shift={best[1]} best_accuracy={best[0]:.6f} best_compared={best[2]} best_mismatches={best[3]}')
+'@ | python-
+
+[PURPOSE]
+Run the corrected representative BPSK, QPSK, FSK, and QAM16 diagnostics using direct read-only IQ parsing and existing synchronization/demodulation functions.
+
+[RESULT]
+BPSK: 819 recovered/819 expected, exact accuracy 52.869%, best shift +6 accuracy 53.998%. QPSK: 1638/1638, 49.512%, best shift +1 52.535%. FSK: 819 recovered/2000 expected, common-prefix accuracy 51.526%, best shift -9 54.815%. QAM16: 3276/3276, 50.580%, best shift -16 51.841%. Small shifts do not dramatically restore accuracy.
+
+[COMMAND]
+@'
+import json, numpy as np, pathlib, collections, csv, glob, os, re
+from signal_processing.synchronization.frequency_sync import correct_frequency_offset
+from signal_processing.synchronization.phase_sync import correct_phase_offset
+from signal_processing.synchronization.timing_sync import estimate_timing_offset, sample_symbols
+from signal_processing.demodulation.bpsk import demodulate_bpsk
+from signal_processing.demodulation.qpsk import demodulate_qpsk
+from signal_processing.demodulation.fsk import demodulate_fsk
+from signal_processing.demodulation.qam import demodulate_16qam
+def load(p):
+ raw=np.fromfile(p,dtype='<f4'); return raw[0::2]+1j*raw[1::2]
+def norm(s): return os.path.basename(s).lower().replace('.json','').replace('2fsk','fsk').replace('16qam','qam16')
+cases=[('BPSK','signal_0002_bpsk','signal_0002_bpsk',demodulate_bpsk,True),('QPSK','signal_0201_qpsk','signal_0201_qpsk',demodulate_qpsk,True),('FSK','signal_0401_fsk','signal_0401_2fsk',demodulate_fsk,False),('QAM16','signal_0601_qam16','signal_0601_16qam',demodulate_16qam,True)]
+for cls,stem,meta_stem,demod,uses_timing in cases:
+ main=json.load(open(pathlib.Path('data/metadata')/cls/(meta_stem+'.json'))); backup=json.load(open(pathlib.Path('data/metadata_backup')/cls/(meta_stem+'.json'))); iq=load(pathlib.Path('data/iq')/('QAM16' if cls=='QAM16' else cls)/(stem+'.iq')); corr=correct_phase_offset(correct_frequency_offset(iq,main['frequency_offset_hz'],main['sampling_frequency_hz']),main['phase_offset_degrees']); rec=demod(sample_symbols(corr,main['samples_per_symbol'],estimate_timing_offset(corr,main['samples_per_symbol']))) if uses_timing else demod(corr,main['samples_per_symbol'])
+ print(cls,'main_bits',len(main['bits']),'backup_bits',len(backup['bits']),'main_samples',main['samples'],'backup_samples',backup['samples'],'bit_sequences_equal',main['bits']==backup['bits'],'main_backup_common_bit_agreement',sum(a==b for a,b in zip(main['bits'],backup['bits']))/min(len(main['bits']),len(backup['bits'])),'recovered_vs_main_prefix',sum(int(a)==int(b) for a,b in zip(main['bits'],rec))/min(len(main['bits']),len(rec)),'recovered_vs_backup_prefix',sum(int(a)==int(b) for a,b in zip(backup['bits'],rec))/min(len(backup['bits']),len(rec)))
+for p in ['data/dataset.csv','data/metadata/dataset.csv']:
+ rows=list(csv.reader(open(p,encoding='utf-8-sig'))); print('CSV',p,'records',len(rows)-1,'header',rows[0])
+print('GENERATOR_MATH num_samples=8192 sps=10 ceil_symbols=820 floor_symbols=819; generated_bits BPSK/FSK=820 QPSK=1640 QAM16=3280; truncated_waveform_full_symbols=819; waveform-represented bits BPSK/FSK=819 QPSK=1638 QAM16=3276')
+'@ | python-
+
+[PURPOSE]
+Compare main and backup metadata bitstreams against recovered representative signals, and count CSV records/read generator math without modifying files.
+
+[RESULT]
+CSV records: data/dataset.csv=40; data/metadata/dataset.csv=800. Main/backup sample counts are 8192/20000. Main bits are prefixes of backup bits for the tested BPSK/QPSK/QAM16 records; FSK is 2000 bits in both. Recovery agrees with the common main/backup prefix at the same near-chance rates. The current generator math is 820 generated symbols but only 819 complete symbols in an 8192-sample waveform, yielding 819/1638/819/3276 represented bits for BPSK/QPSK/FSK/QAM16 if only complete symbols count.
+
+[COMMAND]
+rg -n -i "metadata\[.?bits|expected_bits|transmitted_bits|recovered_bits|bit_accuracy|bit error|BER|ber|load_model|prepare_features|bits" ai backend signal_processing intelligence fusion tests scripts | Select-Object -First 300
+
+[PURPOSE]
+Trace every relevant ground-truth-bit, recovered-bit, BER, accuracy, model-loading, and feature-generation reference without modifying files.
+
+[RESULT]
+The command could not run because ripgrep (rg) is not installed/available in this PowerShell environment. No project file was changed.
+
+[COMMAND]
+Get-ChildItem ai,backend,signal_processing,intelligence,fusion,tests,scripts -Recurse -File -Filter *.py | Select-String -Pattern 'metadata\[.?bits|expected_bits|transmitted_bits|recovered_bits|bit_accuracy|bit error|BER|ber|load_model|prepare_features|bits' | Select-Object Path,LineNumber,Line | Select-Object -First 300
+
+[PURPOSE]
+Use PowerShell's available text search to complete the ground-truth-bit, recovery, BER, and model-use trace.
+
+[RESULT]
+Ground-truth expected_bits and prefix comparison occur in tests/signal_processing/test_demodulation.py. The live backend creates recovered_bits and reports bit_count but does not load metadata bits or calculate BER/bit accuracy. AI training/inference uses IQ-derived I/Q/magnitude/phase features and class labels, not transmitted metadata bits.
+
+[COMMAND]
+git status --short; Get-Content config.py; Get-Content requirements.txt; Get-Content README.md
+
+[PURPOSE]
+Check current worktree state and top-level configuration before the implementation audit.
+
+[RESULT]
+Existing unrelated worktree edits/deletions were present. config.py already centralizes core paths/constants; requirements.txt remains incomplete and includes panda; README is minimal.
+
+[COMMAND]
+Get-Content dsp\timing\symbol_rate.py; Get-Content backend\services\pipeline.py; Get-Content scripts\run_dsp_analysis.py; Get-Content tests\dsp\test_timing_analysis.py; Get-Content tests\test_pipeline.py
+
+[PURPOSE]
+Inspect the symbol-rate estimator, its consumers, and current tests.
+
+[RESULT]
+The estimator returns symbol_rate_hz, samples_per_symbol, confidence, and diagnostics. The live pipeline and CLI were reading symbol_rate, causing the dashboard/summary to show zero or lose the estimate. Existing timing tests cover positive estimator output.
+
+[COMMAND]
+$env:PYTHONPATH='.'; python -m unittest tests.dsp.test_timing_analysis
+
+[PURPOSE]
+Run the timing test module after the consumer correction.
+
+[RESULT]
+Import-style invocation failed because tests is not an importable package.
+
+[COMMAND]
+$env:PYTHONPATH='.'; python -m unittest discover -s tests/dsp -p 'test_timing_analysis.py'
+
+[PURPOSE]
+Run the same timing tests through unittest discovery.
+
+[RESULT]
+18 timing tests passed.
+
+[COMMAND]
+$env:PYTHONPATH='.'; @' ... '@ | python
+
+[PURPOSE]
+Check the estimator on a known 100 kHz synthetic signal with valid Nyquist bounds.
+
+[RESULT]
+The estimator returned 110 kHz with confidence 1.0, demonstrating that exposing the key fixes the zero but does not yet guarantee accurate symbol-rate estimation.
+
+[COMMAND]
+$env:PYTHONPATH='.'; @' ... '@ | python
+
+[PURPOSE]
+Measure symbol-rate estimates on representative existing IQ signals.
+
+[RESULT]
+Observed approximately 35.3 kHz for QPSK, 125 kHz for FSK, and 1.46 kHz for QAM16 versus approximately 100 kHz metadata.
+
+[COMMAND]
+$env:PYTHONPATH='.'; python .\scripts\run_dsp_analysis.py data\iq\QPSK\signal_0201_qpsk.iq
+
+[PURPOSE]
+Verify standalone DSP output after the symbol-rate key correction.
+
+[RESULT]
+Initial run failed earlier in estimate_phase because the CLI passed a negative frequency.
+
+[COMMAND]
+$env:PYTHONPATH='.'; python .\scripts\run_dsp_analysis.py data\iq\QPSK\signal_0201_qpsk.iq
+
+[PURPOSE]
+Re-run standalone DSP analysis after aligning its phase-frequency handling with the live pipeline.
+
+[RESULT]
+
+CLI completed and displayed Symbol Rate 35,278 Baud, confirming the key path is active while also exposing the estimator-quality limitation.
+
+[COMMAND]
+$env:PYTHONPATH='.'; @' ... '@ | python
+
+[PURPOSE]
+Run the live pipeline on an existing WAV and verify propagation into DSP, report, and frontend feature data.
+
+[RESULT]
+Pipeline completed. DSP and report symbol_rate both equaled approximately 35,304 Hz, and the frontend feature displayed 35,304 Baud.
+
+[COMMAND]
+$env:PYTHONPATH='.'; @' ... '@ | python
+
+[PURPOSE]
+Inspect autocorrelation evidence on representative IQ signals for a future estimator-quality investigation.
+
+[RESULT]
+QPSK/QAM autocorrelation showed a first near-zero region around lag 10; FSK had a different oscillatory pattern. This supports further estimator work but was not used to hardcode or alter the result in this task.
+
+[COMMAND]
+Get-Content terminal.txt -Tail 30
+
+[PURPOSE]
+Inspect the command-ledger tail before appending the current task entries.
+
+[RESULT]
+Confirmed the existing ledger tail and appended this task's command summaries.
+
+[COMMAND]
+python -m unittest discover -s tests/dsp -p 'test_timing_analysis.py'
+
+[PURPOSE]
+Validate the estimator after adding waveform-derived candidate methods.
+
+[RESULT]
+The first integrated attempt exposed a syntax error from a malformed patch; the estimator was restored cleanly afterward and the same suite later passed all 18 tests.
+
+[COMMAND]
+python .\tests\dsp\test_symbol_rate_controlled.py
+
+[PURPOSE]
+Run controlled known-rate QPSK/QAM16/FSK tests across 50/100/200 kHz and SNR cases.
+
+[RESULT]
+After refinement, 2 controlled tests passed. QPSK/QAM16 meet 5% at 20 dB; FSK uses a documented 10% tolerance at 20 dB, while lower-SNR tests require explicit status/confidence.
+
+[COMMAND]
+python -m unittest discover -s tests/dsp -p 'test_timing_analysis.py'
+
+[PURPOSE]
+Confirm the original timing/cyclostationary regression suite remains intact.
+
+[RESULT]
+18 tests passed.
+
+[COMMAND]
+python .\tests\dsp\test_symbol_rate_controlled.py
+
+[PURPOSE]
+Re-run controlled tests after final confidence/status handling.
+
+[RESULT]
+2 tests passed.
+
+[COMMAND]
+$env:PYTHONPATH='.'; python tests/dsp/test_timing_analysis.py
+
+[PURPOSE]
+Confirm existing 18 timing and cyclostationary tests remain intact and passing.
+
+[RESULT]
+Ran 18 tests in 0.159s. OK (18 passed).
+
+[COMMAND]
+$env:PYTHONPATH='.'; python tests/dsp/test_symbol_rate_controlled.py
+
+[PURPOSE]
+Confirm controlled known-rate symbol-rate tests pass.
+
+[RESULT]
+Ran 2 tests in 0.113s. OK (2 passed).
+
+[COMMAND]
+$env:PYTHONPATH='.'; python -c "import json, numpy as np; from scipy.signal import medfilt; from signal_processing.input.loader import load_signal; raw, fs = load_signal('data/iq/FSK/signal_0401_fsk.iq'); phase_diff = np.angle(raw[1:] * np.conjugate(raw[:-1])); filt = medfilt(phase_diff, kernel_size=5); states = filt > float(np.median(filt)); changes = np.flatnonzero(np.diff(states.astype(np.int8)) != 0) + 1; runs = np.diff(np.r_[0, changes, filt.size]); vals, counts = np.unique(runs[runs >= 3], return_counts=True); print(list(zip(vals, counts)))"
+
+[PURPOSE]
+Analyze the instantaneous frequency state dwell times and run lengths for representative FSK signal.
+
+[RESULT]
+Run lengths showed primary mode at 8 samples (121 occurrences), with subsequent modes at 16 (48), 24 (24), 32 (10), 40 (7), 48 (5) samples. All dwell times are exact integer multiples of 8 samples (125 kHz at 1 MS/s).
+
+[COMMAND]
+$env:PYTHONPATH='.'; python tests/test_pipeline.py
+
+[PURPOSE]
+Run end-to-end pipeline integration tests on IQ and WAV samples.
+
+[RESULT]
+[PASS] test_pipeline_on_iq_sample
+[PASS] test_pipeline_on_wav_sample
+ALL PIPELINE INTEGRATION TESTS PASSED SUCCESSFULLY!
+
+[COMMAND]
+$env:PYTHONPATH='.'; python tests/dsp/test_fsk_investigation_and_audit.py
+
+[PURPOSE]
+Run new comprehensive FSK investigation and dashboard consistency audit test suite.
+
+[RESULT]
+Ran 11 tests in 7.275s. OK (11 passed).
+
+[COMMAND]
+$env:PYTHONPATH='.'; python -c "from backend.services.pipeline import analyze_signal; cases = [('QPSK', 'data/iq/QPSK/signal_0201_qpsk.iq'), ('QAM16', 'data/iq/QAM16/signal_0601_qam16.iq'), ('FSK', 'data/iq/FSK/signal_0401_fsk.iq')]; [print(c, analyze_signal(p)['dsp_analysis']['symbol_rate_waveform'], analyze_signal(p)['dsp_analysis']['symbol_rate_status']) for c, p in cases]"
+
+[PURPOSE]
+Verify live pipeline execution and status reporting across representative signals.
+
+[RESULT]
+QPSK: 100,084 Baud (detected)
+QAM16: 90,529 Baud (Waveform/metadata disagreement)
+FSK: 125,000 Baud (Waveform/metadata disagreement)
+

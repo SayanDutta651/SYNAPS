@@ -31,7 +31,7 @@ from dsp.spectral.fft import compute_fft
 from dsp.spectral.psd import estimate_psd
 from dsp.spectral.bandwidth import estimate_bandwidth
 from dsp.signal_quality.snr import estimate_snr
-from dsp.frequency.cfo import estimate_cfo
+from dsp.frequency.cfo import estimate_cfo, estimate_fsk_carrier_center
 from dsp.frequency.frequency_estimation import estimate_frequency
 from dsp.phase.phase_estimation import estimate_phase
 from dsp.timing.symbol_rate import estimate_symbol_rate
@@ -136,20 +136,60 @@ class AnalysisPipeline:
         freq_res = estimate_frequency(preprocessed, sampling_rate=fs)
         est_freq = float(freq_res.get("estimated_frequency_hz", 0.0))
         cfo_res = estimate_cfo(preprocessed, sampling_rate=fs, reference_frequency_hz=0.0)
-        phase_res = estimate_phase(preprocessed, sampling_rate=fs, frequency_hz=est_freq)
+        fsk_carrier = estimate_fsk_carrier_center(preprocessed, sampling_rate=fs, reference_frequency_hz=0.0)
+        phase_freq = abs(est_freq) if abs(est_freq) > 0.0 else None
+        phase_res = estimate_phase(preprocessed, sampling_rate=fs, frequency_hz=phase_freq)
         timing_res = estimate_symbol_rate(preprocessed, sampling_rate=fs)
         constellation_res = analyze_constellation(preprocessed)
         hoc_res = calculate_hoc(preprocessed)
 
+        # For FSK-like signals, determine true carrier center from positive & negative tone peaks
+        is_fsk_like = (
+            timing_res.get("symbol_rate_method") == "instantaneous_frequency_state_duration"
+            and fsk_carrier.get("tone_separation_hz", 0.0) > 10000.0
+        )
+        cfo_val = float(fsk_carrier["cfo_hz"]) if is_fsk_like else float(cfo_res.get("cfo_hz", 0.0))
+
+        # Check metadata reference if available for provenance comparison
+        meta_symbol_rate = None
+        if isinstance(file_path_or_samples, (str, Path)):
+            try:
+                paths = resolve_sample_paths(file_path_or_samples)
+                meta_path = paths.get("metadata_path")
+                if meta_path and meta_path.exists():
+                    import json
+                    with open(meta_path, "r", encoding="utf-8") as f:
+                        meta_dict = json.load(f)
+                    meta_symbol_rate = float(meta_dict.get("symbol_rate_hz")) if meta_dict.get("symbol_rate_hz") else None
+            except Exception:
+                meta_symbol_rate = None
+
+        measured_rate = float(timing_res["symbol_rate_hz"])
+        if meta_symbol_rate is not None:
+            discrepancy = abs(measured_rate - meta_symbol_rate) / max(meta_symbol_rate, 1.0) > 0.05
+            timing_status = "Waveform/metadata disagreement" if discrepancy else timing_res.get("symbol_rate_status", "detected")
+        else:
+            discrepancy = False
+            timing_status = timing_res.get("symbol_rate_status", "detected")
+
         dsp_summary = {
             "snr_db": float(snr_res.get("snr_db", 0.0)),
-            "cfo_hz": float(cfo_res.get("cfo_hz", 0.0)),
+            "cfo_hz": cfo_val,
+            "cfo_carrier_center_hz": float(fsk_carrier["cfo_hz"]) if is_fsk_like else None,
+            "fsk_tone_metrics": fsk_carrier if is_fsk_like else None,
+            "dominant_positive_tone_hz": float(cfo_res.get("measured_frequency_hz", 0.0)),
             "bandwidth_hz": float(bw_res.get("bandwidth_3db_hz", bw_res.get("bandwidth_hz", 0.0))),
-            "symbol_rate": float(timing_res.get("symbol_rate", 0.0)),
+            "symbol_rate": measured_rate,
+            "symbol_rate_waveform": measured_rate,
+            "symbol_rate_metadata_ref": meta_symbol_rate,
+            "symbol_rate_confidence": float(timing_res.get("confidence", 1.0)),
+            "symbol_rate_method": timing_res.get("symbol_rate_method", "unknown"),
+            "symbol_rate_status": timing_status,
             "peak_frequency_hz": float(fft_res.get("peak_frequency_hz", 0.0)),
             "phase_offset_rad": float(phase_res.get("phase_offset_radians", 0.0)),
             "hoc": hoc_res,
             "constellation": constellation_res,
+            "timing_details": timing_res,
         }
 
         # 6. SYNCHRONIZATION
@@ -280,6 +320,196 @@ class AnalysisPipeline:
 
         report = generate_intelligence_report(raw_analysis)
         raw_analysis["report"] = report
+
+        # 13. FRONTEND VISUALIZATION DATA GENERATION
+        # Waveform: 256 samples in [-1.0, 1.0]
+        waveform_pts = 256
+        if len(preprocessed) >= waveform_pts:
+            step = len(preprocessed) / waveform_pts
+            indices = (np.arange(waveform_pts) * step).astype(int)
+            waveform_samples = preprocessed.real[indices].tolist()
+        else:
+            waveform_samples = np.pad(
+                preprocessed.real, (0, waveform_pts - len(preprocessed))
+            ).tolist()
+
+        # Spectrum Bins: 64 bins in [0.0, 1.0]
+        fft_mag = np.abs(fft_res.get("spectrum", []))
+        if len(fft_mag) > 0:
+            bin_step = len(fft_mag) / 64
+            b_indices = (np.arange(64) * bin_step).astype(int)
+            sub_mag = fft_mag[b_indices]
+            max_m = np.max(sub_mag)
+            min_m = np.min(sub_mag)
+            if max_m > min_m:
+                spectrum_bins = ((sub_mag - min_m) / (max_m - min_m)).tolist()
+            else:
+                spectrum_bins = [0.0] * 64
+        else:
+            spectrum_bins = [0.0] * 64
+
+        # Spectrogram: 24 rows x 48 columns in [0.0, 1.0]
+        try:
+            from ai.representations.spectrogram import compute_spectrogram
+            from scipy.ndimage import zoom
+            _, _, mag_db = compute_spectrogram(preprocessed, sample_rate=fs)
+            h, w = 24, 48
+            curr_h, curr_w = mag_db.shape
+            if curr_h > 0 and curr_w > 0:
+                zoom_y = h / curr_h
+                zoom_x = w / curr_w
+                resampled = zoom(mag_db, (zoom_y, zoom_x), order=1)
+                min_db = np.min(resampled)
+                max_db = np.max(resampled)
+                if max_db > min_db:
+                    spectrogram_rows = ((resampled - min_db) / (max_db - min_db)).tolist()
+                else:
+                    spectrogram_rows = [[0.0] * w for _ in range(h)]
+            else:
+                spectrogram_rows = [[0.0] * w for _ in range(h)]
+        except Exception:
+            spectrogram_rows = [[0.0] * 48 for _ in range(24)]
+
+        # Prediction breakdown
+        probs = ai_summary.get("probabilities", {})
+        prediction_breakdown = [
+            {
+                "classLabel": name,
+                "probability": float(probs.get(name, 0.0)) / 100.0,
+            }
+            for name in CLASS_NAMES
+        ]
+        prediction_breakdown.sort(key=lambda x: x["probability"], reverse=True)
+
+        # Feature table items with technically precise descriptions and provenance
+        sr_desc = "Waveform-estimated symbol/baud rate"
+        if dsp_summary.get("symbol_rate_metadata_ref") is not None:
+            sr_desc += f" (Ref: {dsp_summary['symbol_rate_metadata_ref']:.0f} Baud | {dsp_summary['symbol_rate_status']})"
+
+        if dsp_summary.get("fsk_tone_metrics") is not None:
+            fsk_tm = dsp_summary["fsk_tone_metrics"]
+            cfo_features = [
+                {
+                    "name": "Carrier Center Offset",
+                    "value": f"{dsp_summary['cfo_hz']:.1f}",
+                    "unit": "Hz",
+                    "description": "Estimated carrier center offset from baseband reference (f_center = (f_upper + f_lower)/2)",
+                },
+                {
+                    "name": "Lower FSK Tone",
+                    "value": f"{fsk_tm['dominant_lower_tone_hz'] / 1e3:.1f}",
+                    "unit": "kHz",
+                    "description": "Dominant negative-frequency data tone (f0)",
+                },
+                {
+                    "name": "Upper FSK Tone",
+                    "value": f"{fsk_tm['dominant_upper_tone_hz'] / 1e3:.1f}",
+                    "unit": "kHz",
+                    "description": "Dominant positive-frequency data tone (f1)",
+                },
+                {
+                    "name": "Tone Separation",
+                    "value": f"{fsk_tm['tone_separation_hz'] / 1e3:.1f}",
+                    "unit": "kHz",
+                    "description": "Peak-to-peak tone frequency separation (2 * Delta_f)",
+                },
+            ]
+        else:
+            cfo_features = [
+                {
+                    "name": "Carrier Frequency Offset",
+                    "value": f"{dsp_summary['cfo_hz']:.1f}",
+                    "unit": "Hz",
+                    "description": "Estimated carrier frequency shift from baseband center",
+                },
+            ]
+
+        features_list = cfo_features + [
+            {
+                "name": "Signal-to-Noise Ratio",
+                "value": f"{dsp_summary['snr_db']:.1f}",
+                "unit": "dB",
+                "description": "Estimated signal power over noise floor",
+            },
+            {
+                "name": "Occupied Bandwidth (99% Power)",
+                "value": f"{dsp_summary['bandwidth_hz'] / 1e3:.1f}",
+                "unit": "kHz",
+                "description": "Estimated 99% occupied spectral power bandwidth",
+            },
+            {
+                "name": "Symbol Rate",
+                "value": f"{dsp_summary['symbol_rate']:.0f}",
+                "unit": "Baud",
+                "description": sr_desc,
+            },
+            {
+                "name": "Higher-Order Cumulant C40",
+                "value": f"{abs(dsp_summary['hoc'].get('C40', 0)):.3f}",
+                "unit": "",
+                "description": "4th-order cumulant reflecting constellation symmetry",
+            },
+            {
+                "name": "Higher-Order Cumulant C42",
+                "value": f"{abs(dsp_summary['hoc'].get('C42', 0)):.3f}",
+                "unit": "",
+                "description": "4th-order cumulant reflecting power variance",
+            },
+            {
+                "name": "Peak-to-Average Power Ratio",
+                "value": f"{fingerprint.get('papr_db', 0):.1f}",
+                "unit": "dB",
+                "description": "Crest factor of signal envelope",
+            },
+            {
+                "name": "Emitter RF Fingerprint ID",
+                "value": f"{fingerprint.get('fingerprint_id', 'N/A')}",
+                "unit": "",
+                "description": "Derived RF feature-hash identifier",
+            },
+        ]
+
+        if dsp_summary.get("fsk_tone_metrics") is not None:
+            cfo_exp_str = f"carrier center offset of {dsp_summary['cfo_hz']:.1f} Hz (tones: {dsp_summary['fsk_tone_metrics']['dominant_lower_tone_hz']/1e3:.1f} / {dsp_summary['fsk_tone_metrics']['dominant_upper_tone_hz']/1e3:.1f} kHz)"
+        else:
+            cfo_exp_str = f"carrier offset of {dsp_summary['cfo_hz']:.1f} Hz"
+
+        explanation = (
+            f"The AI Transformer model classified this signal as {final_mod} "
+            f"with {conf_pct:.1f}% confidence ({det_status}). "
+            f"DSP physical analysis provides supporting evidence with an estimated SNR of {dsp_summary['snr_db']:.1f} dB, "
+            f"{cfo_exp_str}, and occupied bandwidth of {dsp_summary['bandwidth_hz'] / 1e3:.1f} kHz (99% power). "
+            f"Higher-Order Cumulants (C40={abs(dsp_summary['hoc'].get('C40', 0)):.3f}, C42={abs(dsp_summary['hoc'].get('C42', 0)):.3f}) "
+            f"and spectral profile support this hypothesis with multi-modal evidence score of {evidence.get('overall_evidence_score', 1.0):.2f}. "
+            f"Demodulation produced {len(recovered_bits)} recovered raw bits; data validation has not yet been established."
+        )
+
+        import datetime
+        frontend_data = {
+            "id": f"analysis-{sample_id}",
+            "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+            "isDemoData": False,
+            "label": f"Live SYNAPS Analysis ({final_mod})",
+            "filename": Path(file_str).name if file_str != "in_memory" else "in_memory_signal.iq",
+            "format": fmt,
+            "classification": final_mod,
+            "confidence": float(conf_pct) / 100.0,
+            "sampleRate": fs,
+            "duration": len(raw_samples) / fs,
+            "bandwidth": dsp_summary["bandwidth_hz"],
+            "snr": dsp_summary["snr_db"],
+            "peakFrequency": dsp_summary["peak_frequency_hz"],
+            "numSamples": len(raw_samples),
+            "predictionBreakdown": prediction_breakdown,
+            "features": features_list,
+            "explanation": explanation,
+            "waveformSamples": waveform_samples,
+            "spectrumBins": spectrum_bins,
+            "spectrogramRows": spectrogram_rows,
+            "raw_report": report,
+        }
+
+        raw_analysis["frontend_data"] = frontend_data
         return raw_analysis
 
 

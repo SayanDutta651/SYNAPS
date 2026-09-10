@@ -42,7 +42,7 @@ def generate_intelligence_report(
         "dsp_metrics": {
             "snr_db": dsp_info.get("snr_db", 0.0),
             "carrier_frequency_offset_hz": dsp_info.get("cfo_hz", 0.0),
-            "bandwidth_3db_hz": dsp_info.get("bandwidth_hz", 0.0),
+            "occupied_bandwidth_hz": dsp_info.get("bandwidth_hz", 0.0),
             "symbol_rate": dsp_info.get("symbol_rate", 0.0),
             "peak_frequency_hz": dsp_info.get("peak_frequency_hz", 0.0),
         },
@@ -98,7 +98,7 @@ def format_text_report(report: Dict[str, Any]) -> str:
         "-" * 40,
         f"SNR             : {dsp.get('snr_db', 0.0):.2f} dB",
         f"CFO             : {dsp.get('carrier_frequency_offset_hz', 0.0):.2f} Hz",
-        f"Bandwidth (3dB) : {dsp.get('bandwidth_3db_hz', 0.0):,.0f} Hz",
+        f"Occupied BW (99%): {dsp.get('occupied_bandwidth_hz', 0.0):,.0f} Hz",
         f"Symbol Rate     : {dsp.get('symbol_rate', 0.0):,.0f} Baud",
         "",
         "SIGNAL RECOVERY & DECODING",

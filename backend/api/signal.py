@@ -67,3 +67,43 @@ def inspect_signal(file_path: str):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/samples")
+def list_sample_signals():
+    """
+    List preloaded dataset sample signals for quick testing in the UI.
+    """
+    from project_paths import CLASS_NAMES, IQ_ROOT, WAV_ROOT
+    samples_list = []
+
+    for c in CLASS_NAMES:
+        iq_dir = IQ_ROOT / c
+        wav_dir = WAV_ROOT / c
+
+        if iq_dir.exists():
+            for f in sorted(list(iq_dir.glob("*.iq")))[:5]:
+                samples_list.append({
+                    "sample_id": f.stem,
+                    "filename": f.name,
+                    "modulation": c,
+                    "format": "IQ",
+                    "file_path": str(f),
+                    "size_bytes": f.stat().st_size,
+                })
+
+        if wav_dir.exists():
+            for f in sorted(list(wav_dir.glob("*.wav")))[:2]:
+                samples_list.append({
+                    "sample_id": f.stem,
+                    "filename": f.name,
+                    "modulation": c,
+                    "format": "WAV",
+                    "file_path": str(f),
+                    "size_bytes": f.stat().st_size,
+                })
+
+    return {
+        "count": len(samples_list),
+        "samples": samples_list,
+    }

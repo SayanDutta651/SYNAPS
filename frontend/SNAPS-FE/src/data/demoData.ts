@@ -63,7 +63,7 @@ export const demoAnalysis: DemoAnalysis = {
   features: [
     { name: "Carrier Frequency Offset",      value: "20.6",   unit: "kHz",  description: "Mean instantaneous frequency deviation" },
     { name: "Signal-to-Noise Ratio",         value: "17.4",   unit: "dB",   description: "Estimated SNR" },
-    { name: "3dB Occupied Bandwidth",        value: "120.0",  unit: "kHz",  description: "Estimated signal bandwidth" },
+    { name: "Occupied Bandwidth (99% Power)", value: "120.0",  unit: "kHz",  description: "Estimated 99% occupied spectral power bandwidth" },
     { name: "Higher-Order Cumulant C40",     value: "0.025",  unit: "",     description: "4th-order cumulant for constellation symmetry" },
     { name: "Higher-Order Cumulant C42",     value: "0.435",  unit: "",     description: "4th-order cumulant for power variance" },
     { name: "Peak-to-Average Power Ratio",   value: "5.4",    unit: "dB",   description: "Crest factor of the signal envelope" },

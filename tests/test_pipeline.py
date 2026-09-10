@@ -18,7 +18,11 @@ def test_pipeline_on_iq_sample():
     """
     Test full analysis pipeline execution on a canonical IQ file.
     """
-    iq_file = IQ_ROOT / "BPSK" / "signal_0001_bpsk.iq"
+    iq_file = IQ_ROOT / "BPSK" / "signal_0002_bpsk.iq"
+    if not iq_file.exists():
+        bpsk_files = list((IQ_ROOT / "BPSK").glob("*.iq"))
+        assert len(bpsk_files) > 0, "No BPSK IQ files found"
+        iq_file = bpsk_files[0]
     assert iq_file.exists(), f"Sample file not found: {iq_file}"
 
     results = analyze_signal(str(iq_file))

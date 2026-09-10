@@ -49,7 +49,11 @@ def run_dsp(file_path: str, sample_rate: float = None) -> dict:
     freq_res = estimate_frequency(samples, sampling_rate=fs)
     est_f = float(freq_res.get("estimated_frequency_hz", 0.0))
     cfo_res = estimate_cfo(samples, sampling_rate=fs, reference_frequency_hz=0.0)
-    phase_res = estimate_phase(samples, sampling_rate=fs, frequency_hz=est_f)
+    phase_res = estimate_phase(
+        samples,
+        sampling_rate=fs,
+        frequency_hz=abs(est_f),
+    )
     timing_res = estimate_symbol_rate(samples, sampling_rate=fs)
     constellation_res = analyze_constellation(samples)
     hoc_res = calculate_hoc(samples)
@@ -63,7 +67,7 @@ def run_dsp(file_path: str, sample_rate: float = None) -> dict:
         "bandwidth_3db_hz": float(bw_res.get("bandwidth_3db_hz", bw_res.get("bandwidth_hz", 0.0))),
         "snr_db": float(snr_res.get("snr_db", 0.0)),
         "carrier_offset_hz": float(cfo_res.get("cfo_hz", 0.0)),
-        "symbol_rate": float(timing_res.get("symbol_rate", 0.0)),
+        "symbol_rate": float(timing_res["symbol_rate_hz"]),
         "hoc_c40": float(abs(hoc_res.get("C40", 0.0))),
         "hoc_c42": float(abs(hoc_res.get("C42", 0.0))),
     }

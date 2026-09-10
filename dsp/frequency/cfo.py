@@ -215,6 +215,66 @@ def estimate_cfo(
     }
 
 
+def estimate_fsk_carrier_center(
+    signal: np.ndarray,
+    sampling_rate: float,
+    reference_frequency_hz: float = 0.0,
+) -> dict[str, Any]:
+    """
+    Estimate carrier center frequency, true CFO, tone separation, and frequency deviation
+    for symmetric 2FSK signals.
+
+    For symmetric 2FSK:
+        f_center = (f_upper + f_lower) / 2.0
+        cfo_hz = f_center - reference_frequency_hz
+        tone_separation_hz = f_upper - f_lower = 2 * Delta_f
+        frequency_deviation_hz = tone_separation_hz / 2.0 = Delta_f
+    """
+    signal = _validate_signal(signal, sampling_rate)
+    signal = _prepare_signal(signal)
+    signal = signal - np.mean(signal)
+
+    num_samples = signal.size
+    windowed = signal * np.hanning(num_samples)
+    spec = np.abs(np.fft.fftshift(np.fft.fft(windowed)))
+    freqs = np.fft.fftshift(np.fft.fftfreq(num_samples, d=1.0 / sampling_rate))
+
+    # Search for dominant tone in positive and negative bands
+    neg_mask = freqs < -5000.0
+    pos_mask = freqs > 5000.0
+
+    if np.any(neg_mask) and np.any(pos_mask):
+        neg_spec = spec[neg_mask]
+        neg_freqs = freqs[neg_mask]
+        pos_spec = spec[pos_mask]
+        pos_freqs = freqs[pos_mask]
+
+        f_lower = float(neg_freqs[np.argmax(neg_spec)])
+        f_upper = float(pos_freqs[np.argmax(pos_spec)])
+        f_center = float((f_upper + f_lower) / 2.0)
+        tone_sep = float(f_upper - f_lower)
+        f_dev = float(tone_sep / 2.0)
+        cfo_hz = float(f_center - reference_frequency_hz)
+    else:
+        peak_idx = int(np.argmax(spec))
+        f_center = float(freqs[peak_idx])
+        cfo_hz = float(f_center - reference_frequency_hz)
+        f_lower = f_center
+        f_upper = f_center
+        tone_sep = 0.0
+        f_dev = 0.0
+
+    return {
+        "carrier_center_hz": f_center,
+        "cfo_hz": cfo_hz,
+        "reference_frequency_hz": float(reference_frequency_hz),
+        "dominant_lower_tone_hz": f_lower,
+        "dominant_upper_tone_hz": f_upper,
+        "tone_separation_hz": tone_sep,
+        "frequency_deviation_hz": f_dev,
+    }
+
+
 def _load_wav_file(
     file_path: Path,
 ) -> tuple[np.ndarray, float]:

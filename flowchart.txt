@@ -1,0 +1,126 @@
+                         ┌──────────────────────┐
+                         │     USER / SDR       │
+                         │     IQ / WAV FILE    │
+                         └──────────┬───────────┘
+                                    │
+                                    ▼
+                         ┌──────────────────────┐
+                         │ INPUT INTELLIGENCE   │
+                         │ format detection     │
+                         │ loading + validation │
+                         │ metadata             │
+                         └──────────┬───────────┘
+                                    │
+                                    ▼
+                         ┌──────────────────────┐
+                         │ SIGNAL DETECTION     │
+                         │ energy detection     │
+                         │ segmentation         │
+                         └──────────┬───────────┘
+                                    │
+                                    ▼
+                         ┌──────────────────────┐
+                         │ PREPROCESSING        │
+                         │ DC removal           │
+                         │ filtering            │
+                         │ normalization        │
+                         │ resampling            │
+                         └──────────┬───────────┘
+                                    │
+                  ┌─────────────────┴─────────────────┐
+                  │                                   │
+                  ▼                                   ▼
+       ┌──────────────────────┐             ┌──────────────────────┐
+       │       DSP / ECE      │             │         AI           │
+       │                      │             │                      │
+       │ FFT / PSD            │             │ Raw IQ               │
+       │ SNR                  │             │ Spectrogram           │
+       │ CFO                  │             │ Constellation        │
+       │ Phase                │             │                      │
+       │ Symbol rate          │             │ Transformer          │
+       │ Constellation        │             │ CNN                  │
+       │ HOC                  │             │ SSL / MAE             │
+       │ Cyclostationary      │             │                      │
+       └──────────┬───────────┘             └──────────┬───────────┘
+                  │                                    │
+                  │         DSP FEATURES               │ AI FEATURES
+                  │                                    │
+                  └────────────────┬───────────────────┘
+                                   ▼
+                         ┌──────────────────────┐
+                         │   FEATURE FUSION     │
+                         │                      │
+                         │ DSP evidence         │
+                         │ + AI prediction      │
+                         │ + learned features   │
+                         └──────────┬───────────┘
+                                    │
+                                    ▼
+                         ┌──────────────────────┐
+                         │ EVIDENCE ENGINE       │
+                         │                      │
+                         │ How strongly does    │
+                         │ each method support  │
+                         │ the hypothesis?      │
+                         └──────────┬───────────┘
+                                    │
+                                    ▼
+                         ┌──────────────────────┐
+                         │ DECISION ENGINE      │
+                         │                      │
+                         │ Hypothesis           │
+                         │ modulation decision │
+                         │ confidence           │
+                         └──────────┬───────────┘
+                                    │
+                         ┌──────────┴───────────┐
+                         │                      │
+                         ▼                      ▼
+                ┌─────────────────┐    ┌─────────────────┐
+                │ KNOWN SIGNAL    │    │ UNKNOWN/ANOMALY │
+                │ BPSK/QPSK/FSK/  │    │ detection       │
+                │ QAM16           │    │                 │
+                └────────┬────────┘    └────────┬────────┘
+                         │                      │
+                         └──────────┬───────────┘
+                                    ▼
+                         ┌──────────────────────┐
+                         │ DEMODULATION         │
+                         │                      │
+                         │ BPSK / QPSK / FSK / │
+                         │ 16QAM                │
+                         └──────────┬───────────┘
+                                    ▼
+                         ┌──────────────────────┐
+                         │ SYMBOL → BITS        │
+                         │ → decoding           │
+                         │ → validation         │
+                         └──────────┬───────────┘
+                                    ▼
+                         ┌──────────────────────┐
+                         │ RF FINGERPRINT       │
+                         │ CFO / phase jitter   │
+                         │ HOC / baud etc.      │
+                         └──────────┬───────────┘
+                                    ▼
+                         ┌──────────────────────┐
+                         │ FINAL REPORT         │
+                         │                      │
+                         │ classification       │
+                         │ confidence           │
+                         │ DSP measurements     │
+                         │ recovery             │
+                         │ fingerprint          │
+                         │ anomalies            │
+                         └──────────┬───────────┘
+                                    ▼
+                         ┌──────────────────────┐
+                         │       BACKEND        │
+                         │       FastAPI        │
+                         └──────────┬───────────┘
+                                    ▼
+                         ┌──────────────────────┐
+                         │      FRONTEND        │
+                         │ Dashboard / plots    │
+                         │ report / upload      │
+                         └──────────────────────┘

@@ -57,7 +57,7 @@ def aggregate_evidence(
         "supported_modulation": ai_pred,
         "weight": 0.15,
         "score": 0.90,
-        "description": f"Estimated 3dB bandwidth is {bw_hz / 1e3:.1f} kHz.",
+        "description": f"Estimated occupied bandwidth (99% power) is {bw_hz / 1e3:.1f} kHz.",
     })
 
     # Overall evidence score

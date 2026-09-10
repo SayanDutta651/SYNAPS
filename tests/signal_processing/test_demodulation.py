@@ -686,6 +686,38 @@ def test_synthetic_16qam():
     _test_synthetic_demodulation("16QAM", demodulate_16qam, uses_timing=True)
 
 
+def test_qpsk_generator_mapping():
+    symbols = np.array(
+        [1 + 1j, -1 + 1j, -1 - 1j, 1 - 1j],
+        dtype=np.complex128,
+    )
+    expected_bits = np.array([0, 0, 1, 0, 1, 1, 0, 1], dtype=np.uint8)
+
+    recovered_bits = demodulate_qpsk(symbols)
+
+    assert np.array_equal(recovered_bits, expected_bits)
+
+
+def test_qam16_exhaustive_generator_mapping():
+    gray_levels = {
+        (0, 0): -3.0,
+        (0, 1): -1.0,
+        (1, 1): 1.0,
+        (1, 0): 3.0,
+    }
+    symbols = []
+    expected_bits = []
+
+    for i_bits, i_level in gray_levels.items():
+        for q_bits, q_level in gray_levels.items():
+            symbols.append((i_level + 1j * q_level) / np.sqrt(10.0))
+            expected_bits.extend((*i_bits, *q_bits))
+
+    recovered_bits = demodulate_16qam(np.array(symbols, dtype=np.complex128))
+
+    assert np.array_equal(recovered_bits, np.array(expected_bits, dtype=np.uint8))
+
+
 # Dataset tests
 def test_dataset_bpsk():
     _test_dataset_demodulation("BPSK", "signal_0001", demodulate_bpsk, uses_timing=True)
