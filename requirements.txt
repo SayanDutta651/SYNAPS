@@ -1,4 +1,21 @@
-numpy
-scipy
-pytest
-panda
+# ── Core scientific stack ──────────────────────────────────────────────────────
+numpy>=2.2.6
+scipy>=1.17.0
+pandas>=3.0.1
+matplotlib>=3.10.8
+
+# ── Deep learning ──────────────────────────────────────────────────────────────
+# torch is installed separately via CUDA wheel; listed here for reference.
+# Install manually: pip install torch --index-url https://download.pytorch.org/whl/cu128
+torch>=2.11.0
+
+# ── Web framework & API ────────────────────────────────────────────────────────
+fastapi>=0.115.11
+uvicorn[standard]>=0.34.0
+pydantic>=2.10.6
+python-multipart>=0.0.21
+
+# ── Testing ────────────────────────────────────────────────────────────────────
+pytest>=9.1.1
+anyio>=4.9.0
+httpx>=0.28.1
